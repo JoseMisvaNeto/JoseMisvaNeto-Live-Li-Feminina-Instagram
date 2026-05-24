@@ -1,0 +1,13 @@
+# Netlify configuration for building and publishing the Vite app
+[build]
+  command = "npm run build"
+  publish = "dist"
+  # If you use Netlify Functions, set the directory here (optional)
+  # functions = "netlify/functions"
+
+[context.production.environment]
+# Example: set Node version used by Netlify (optional)
+NODE_VERSION = "18"
+
+# Important: set the VITE_... environment variables in Netlify UI
+# e.g. VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
