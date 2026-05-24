@@ -41,9 +41,13 @@ import {
   Calendar,
   Zap,
   Truck,
+<<<<<<< HEAD
   PackageCheck,
   ChevronUp,
   ChevronDown
+=======
+  PackageCheck
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -290,7 +294,10 @@ export default function App() {
   const [acertoRef, setAcertoRef] = useState('');
   const [acertoValue, setAcertoValue] = useState('');
   const [acertoQuantity, setAcertoQuantity] = useState('1');
+<<<<<<< HEAD
   const [showRecentPurchases, setShowRecentPurchases] = useState(false);
+=======
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
   const [validatedRefs, setValidatedRefs] = useState<Set<string>>(new Set());
   const [pendingRefValidation, setPendingRefValidation] = useState<{ref: string, action: 'focus_price' | 'submit'} | null>(null);
   const [purchases, setPurchases] = useState<Purchase[]>(() => {
@@ -469,7 +476,11 @@ export default function App() {
               if (customer && !recoveredShoppingList.some(c => c.id === customer.id)) {
                 recoveredShoppingList.push({
                   ...customer,
+<<<<<<< HEAD
                   purchaseCount: v.qtd_live || 0
+=======
+                  purchaseCount: v.live_vendas_itens?.length || 0
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
                 });
               }
 
@@ -542,6 +553,7 @@ export default function App() {
     return str.toLowerCase().replace(/(?:^|\s)\S/g, (a) => a.toUpperCase());
   };
 
+<<<<<<< HEAD
   const getNextAvailableCustomerCode = (): number => {
     const codes = customers
       .map(c => Number(c.codigo_cliente))
@@ -551,12 +563,33 @@ export default function App() {
     if (codes.length === 0) return 1;
     if (codes[0] > 1) return 1;
 
+=======
+  const getNextAvailableCustomerCode = async (): Promise<number> => {
+    if (!supabase) return 1;
+    
+    // Busca todos os códigos existentes (não nulos) ordenados
+    const { data: allCodes, error } = await supabase
+      .from('live_clientes')
+      .select('codigo_cliente')
+      .not('codigo_cliente', 'is', null)
+      .order('codigo_cliente', { ascending: true });
+
+    if (error || !allCodes || allCodes.length === 0) return 1;
+
+    const codes = allCodes.map(d => Number(d.codigo_cliente));
+    
+    // Se a lista não começar no 1, o primeiro buraco é o 1
+    if (codes[0] > 1) return 1;
+
+    // Procura o primeiro salto na sequência (ex: 1, 2, 5 -> buraco é 3)
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
     for (let i = 0; i < codes.length - 1; i++) {
       if (codes[i + 1] > codes[i] + 1) {
         return codes[i] + 1;
       }
     }
 
+<<<<<<< HEAD
     return codes[codes.length - 1] + 1;
   };
 
@@ -574,6 +607,52 @@ export default function App() {
       }
     }
     return existingIds[existingIds.length - 1] + 1;
+=======
+    // Se não houver buracos no meio, pega o próximo após o último
+    return codes[codes.length - 1] + 1;
+  };
+
+  const getNextAvailableClientId = async (): Promise<number> => {
+    if (!supabase) {
+      // Fallback local se o Supabase não estiver configurado
+      const existingIds = customers
+        .map(c => Number(c.id))
+        .filter(id => !isNaN(id))
+        .sort((a, b) => a - b);
+      
+      if (existingIds.length === 0 || existingIds[0] > 1) return 1;
+      
+      for (let i = 0; i < existingIds.length - 1; i++) {
+        if (existingIds[i + 1] > existingIds[i] + 1) {
+          return existingIds[i] + 1;
+        }
+      }
+      return (existingIds[existingIds.length - 1] || 0) + 1;
+    }
+    
+    // Busca todos os IDs existentes ordenados para encontrar o primeiro "buraco"
+    const { data: allIds, error } = await supabase
+      .from('live_clientes')
+      .select('id')
+      .order('id', { ascending: true });
+
+    if (error || !allIds || allIds.length === 0) return 1;
+
+    const ids = allIds.map(d => Number(d.id));
+    
+    // Se a lista não começar no 1, o primeiro buraco é o 1
+    if (ids[0] > 1) return 1;
+
+    // Procura o primeiro salto na sequência (ex: 1, 2, 6 -> buraco é 3)
+    for (let i = 0; i < ids.length - 1; i++) {
+      if (ids[i + 1] > ids[i] + 1) {
+        return ids[i] + 1;
+      }
+    }
+
+    // Se não houver buracos no meio, pega o próximo após o último
+    return ids[ids.length - 1] + 1;
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
   };
 
   // Optimization: Global customers map for O(1) lookups
@@ -795,6 +874,7 @@ export default function App() {
     setActiveIndex(filtered.length > 0 ? 0 : -1);
   }, [searchQuery, customers]);
 
+<<<<<<< HEAD
   const processCustomerSelection = (customer: Customer | null, searchQueryText: string) => {
     if (customer) {
       if (!customer.codigo_cliente) {
@@ -854,6 +934,32 @@ export default function App() {
       return;
     }
 
+=======
+  // Search Logic
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    // If we have filtered results, pick the active one or the first one
+    if (filteredResults.length > 0) {
+      const selected = activeIndex >= 0 ? filteredResults[activeIndex] : filteredResults[0];
+      
+      // GARANTIA: Se o cliente selecionado do dropdown não tiver código, geramos agora ANTES de abrir o modal
+      if (!selected.codigo_cliente) {
+        const nextCode = await getNextAvailableCustomerCode();
+        setSelectedCustomer({ ...selected, codigo_cliente: nextCode });
+      } else {
+        setSelectedCustomer(selected);
+      }
+      
+      setSearchQuery('');
+      setFilteredResults([]);
+      setActiveIndex(-1);
+      return;
+    }
+
+    // Fallback: search in Supabase customers directly or create temporary
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
     const rawQuery = searchQuery.startsWith('@') ? searchQuery.slice(1) : searchQuery;
     const cleanQuery = normalize(rawQuery);
     
@@ -862,6 +968,10 @@ export default function App() {
       const nStr = normalize(c.nome_completo || "");
       const codeStr = c.codigo_cliente !== null && c.codigo_cliente !== undefined ? String(c.codigo_cliente) : "";
       
+<<<<<<< HEAD
+=======
+      // Se a query for apenas números, prioriza check exato no código (Sacola)
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
       if (/^\d+$/.test(cleanQuery)) {
         return codeStr === cleanQuery || String(c.id) === cleanQuery;
       }
@@ -872,7 +982,33 @@ export default function App() {
              (uStr + " " + nStr) === cleanQuery;
     });
 
+<<<<<<< HEAD
     processCustomerSelection(found || null, searchQuery);
+=======
+    if (found) {
+      // Se a cliente já existe mas não tem código (vinda do estoque, por exemplo)
+      if (!found.codigo_cliente) {
+        const nextCode = await getNextAvailableCustomerCode();
+        setSelectedCustomer({ ...found, codigo_cliente: nextCode });
+      } else {
+        setSelectedCustomer(found);
+      }
+    } else {
+      // É um novo cliente, geramos o código da sacola IMEDIATAMENTE para aparecer no modal
+      const nextId = await getNextAvailableClientId();
+      const nextCode = await getNextAvailableCustomerCode();
+
+      setSelectedCustomer({
+        id: nextId,
+        codigo_cliente: nextCode,
+        username: /^\d+$/.test(cleanQuery) ? '' : searchQuery,
+        nome_completo: 'Novo Cliente',
+        purchaseCount: 0
+      });
+    }
+    setSearchQuery('');
+    setFilteredResults([]);
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
   };
 
   const confirmPurchase = useCallback(async () => {
@@ -883,8 +1019,13 @@ export default function App() {
         ? editingName.trim() 
         : selectedCustomer.nome_completo;
 
+<<<<<<< HEAD
       // Update shopping list using the Ref for immediate synchronous tracking (prevents rapid-click missed counts)
       const exists = shoppingListRef.current.find(c => String(c.id) === String(selectedCustomer.id));
+=======
+      // Update shopping list
+      const exists = shoppingList.find(c => String(c.id) === String(selectedCustomer.id));
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
       let updatedCustomer: Customer;
       const qtdLive = exists ? (exists.purchaseCount || 0) + 1 : 1;
       
@@ -895,9 +1036,15 @@ export default function App() {
           purchaseCount: qtdLive, 
           lastPurchaseTime: now 
         };
+<<<<<<< HEAD
         shoppingListRef.current = shoppingListRef.current.map(c => 
           String(c.id) === String(selectedCustomer.id) ? updatedCustomer : c
         );
+=======
+        setShoppingList(prev => prev.map(c => 
+          String(c.id) === String(selectedCustomer.id) ? updatedCustomer : c
+        ));
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
       } else {
         updatedCustomer = { 
           ...selectedCustomer, 
@@ -905,11 +1052,17 @@ export default function App() {
           purchaseCount: qtdLive, 
           lastPurchaseTime: now 
         };
+<<<<<<< HEAD
         shoppingListRef.current = [updatedCustomer, ...shoppingListRef.current];
       }
       
       setShoppingList(shoppingListRef.current);
       
+=======
+        setShoppingList(prev => [updatedCustomer, ...prev]);
+      }
+      
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
       // Add to timeline (we want to see the state at that moment)
       setTimeline(prev => [updatedCustomer, ...prev].slice(0, 10));
       setSelectedCustomer(null);
@@ -933,6 +1086,7 @@ export default function App() {
             
             if (cError) throw cError;
 
+<<<<<<< HEAD
             setCustomers(prev => {
               const existingIndex = prev.findIndex(c => String(c.id) === String(selectedCustomer.id));
               if (existingIndex >= 0) {
@@ -944,6 +1098,12 @@ export default function App() {
                 };
                 return newArray;
               } else {
+=======
+            // Se for um cliente novo (que não estava na lista mestre), adicionamos agora para buscas futuras
+            setCustomers(prev => {
+              const alreadyInList = prev.some(c => String(c.id) === String(selectedCustomer.id));
+              if (!alreadyInList) {
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
                 return [...prev, {
                   id: Number(selectedCustomer.id),
                   username: selectedCustomer.username,
@@ -951,6 +1111,10 @@ export default function App() {
                   codigo_cliente: customerCode
                 }].sort((a, b) => a.username.localeCompare(b.username));
               }
+<<<<<<< HEAD
+=======
+              return prev;
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
             });
 
             // 2. Depois salva a venda
@@ -974,7 +1138,11 @@ export default function App() {
         syncVenda();
       }
     }
+<<<<<<< HEAD
   }, [selectedCustomer, editingName, liveConfig, supabase]);
+=======
+  }, [selectedCustomer, shoppingList, editingName, liveConfig, supabase]);
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
 
   // Keyboard shortcuts for the identification modal
   useEffect(() => {
@@ -1057,8 +1225,11 @@ export default function App() {
     setAcertoQuantity('1');
     idInput.current?.focus();
 
+<<<<<<< HEAD
     showToast(`✅ Lançado: ${qty}x ${newPurchase.reference} p/ ${activeCustomer.nome_completo}`);
 
+=======
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
     // BACKEND SAVING (Background - Non-blocking)
     if (supabase) {
       const syncItem = async () => {
@@ -1190,8 +1361,13 @@ export default function App() {
         total: customerPurchases.reduce((acc, p) => acc + (p.value * p.quantity), 0),
         paid: isPaid,
         delivered: deliveredIds.includes(String(cid)),
+<<<<<<< HEAD
         qtdLive: customer.purchaseCount || 0,
         codigo_cliente: latestCustomer.codigo_cliente || customer.codigo_cliente
+=======
+        qtdLive: latestCustomer.purchaseCount || 0,
+        codigo_cliente: latestCustomer.codigo_cliente
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
       };
     });
 
@@ -2291,9 +2467,22 @@ export default function App() {
                         <button
                           key={c.id}
                           ref={activeIndex === idx ? activeItemRef : null}
+<<<<<<< HEAD
                           onClick={() => {
                             if (isSavingSale) return;
                             processCustomerSelection(c, searchQuery);
+=======
+                          onClick={async () => {
+                            if (!c.codigo_cliente) {
+                              const nextCode = await getNextAvailableCustomerCode();
+                              setSelectedCustomer({ ...c, codigo_cliente: nextCode });
+                            } else {
+                              setSelectedCustomer(c);
+                            }
+                            setSearchQuery('');
+                            setFilteredResults([]);
+                            setActiveIndex(-1);
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
                           }}
                           className={cn(
                             "w-full flex items-center gap-4 p-3 transition-all border-b border-white/5 last:border-0 group/item",
@@ -2552,6 +2741,7 @@ export default function App() {
                     </button>
                   </div>
                 </form>
+<<<<<<< HEAD
 
                 {purchases.length > 0 && (
                   <div className="mt-4 border-t border-white/5 pt-3">
@@ -2620,6 +2810,8 @@ export default function App() {
                     </AnimatePresence>
                   </div>
                 )}
+=======
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
               </div>
 
               {/* Tabela de Fechamento */}
@@ -3121,7 +3313,11 @@ export default function App() {
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex items-center gap-3">
                           <div className="text-xl font-black text-[#ccff00] drop-shadow-[0_0_5px_rgba(204,255,0,0.3)]">
+<<<<<<< HEAD
                             {group.codigo_cliente || group.customerId}
+=======
+                            {group.customerId}
+>>>>>>> 5cc93f6e7891e0de7a2208068e6660d415fa4d45
                           </div>
                           <div className="flex flex-col">
                             <h3 className="text-[13px] font-bold text-[#00ffff] underline decoration-[#00ffff]/30 underline-offset-2 uppercase tracking-tight truncate max-w-[200px]">
