@@ -139,7 +139,7 @@ const Navbar = ({
         <span className="font-black tracking-tighter text-[#ccff00] text-lg">LIVE LOGISTICS</span>
       </div>
       
-      <div className="flex gap-2">
+      <div className="hidden md:flex gap-2">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -152,7 +152,7 @@ const Navbar = ({
             )}
           >
             <tab.icon className="w-3.5 h-3.5" />
-            {tab.label}
+            <span>{tab.label}</span>
           </button>
         ))}
       </div>
@@ -177,7 +177,7 @@ const Navbar = ({
           <div className={cn("flex items-center gap-2 px-3 py-1.5 rounded-md border", liveConfig.isActive ? "bg-[#ccff00]/10 border-[#ccff00]/50 shadow-[0_0_15px_rgba(204,255,0,0.2)]" : "bg-white/5 border-white/10")}>
             <div className={cn("w-2 h-2 rounded-full", liveConfig.isActive ? "bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" : "bg-white/20")} />
             <span className={cn("text-sm font-black leading-none uppercase tracking-wider", liveConfig.isActive ? "text-[#ccff00]" : "text-white/40")}>
-              {liveConfig.isActive ? `LIVE ${new Date(liveConfig.date + 'T12:00:00').toLocaleDateString('pt-BR')}` : 'LIVE OFF'}
+              {liveConfig.isActive ? `LIVE ${safeFormatDate(liveConfig.date)}` : 'LIVE OFF'}
             </span>
           </div>
         </div>
@@ -188,23 +188,53 @@ const Navbar = ({
 const normalize = (str: string) => 
   (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
+const safeFormatDate = (dateStr: string | undefined | null) => {
+  if (!dateStr) return 'Data Inválida';
+  try {
+    const d = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00');
+    if (isNaN(d.getTime())) return 'Data Inválida';
+    return d.toLocaleDateString('pt-BR');
+  } catch (e) {
+    return 'Data Inválida';
+  }
+};
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState('live');
+  console.log('[App] Rendering started');
+  const [activeTab, setActiveTab] = useState(() => window.innerWidth < 768 ? 'sacolas' : 'live');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [confirmQty, setConfirmQty] = useState(1);
+
+  useEffect(() => {
+    if (selectedCustomer) {
+      setConfirmQty(1);
+    }
+  }, [selectedCustomer]);
+
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const customersRef = useRef(customers);
+  useEffect(() => {
+    customersRef.current = customers;
+  }, [customers]);
   const [isFetchingCustomers, setIsFetchingCustomers] = useState(false);
   const [shoppingList, setShoppingList] = useState<Customer[]>(() => {
     const saved = localStorage.getItem('shoppingList');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing shoppingList:", e); }
     }
     return [];
   });
   const [timeline, setTimeline] = useState<Customer[]>(() => {
     const saved = localStorage.getItem('timeline');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing timeline:", e); }
     }
     return [];
   });
@@ -238,7 +268,10 @@ export default function App() {
   const [sentMessages, setSentMessages] = useState<string[]>(() => {
     const saved = localStorage.getItem('sentMessages');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing sentMessages:", e); }
     }
     return [];
   });
@@ -246,7 +279,10 @@ export default function App() {
   const [sentWhatsappMessages, setSentWhatsappMessages] = useState<string[]>(() => {
     const saved = localStorage.getItem('sentWhatsappMessages');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing sentWhatsappMessages:", e); }
     }
     return [];
   });
@@ -291,12 +327,28 @@ export default function App() {
   const [acertoValue, setAcertoValue] = useState('');
   const [acertoQuantity, setAcertoQuantity] = useState('1');
   const [showRecentPurchases, setShowRecentPurchases] = useState(false);
+  const [deletePurchaseModal, setDeletePurchaseModal] = useState<{ visible: boolean, purchase: Purchase | null }>({ visible: false, purchase: null });
   const [validatedRefs, setValidatedRefs] = useState<Set<string>>(new Set());
   const [pendingRefValidation, setPendingRefValidation] = useState<{ref: string, action: 'focus_price' | 'submit'} | null>(null);
   const [purchases, setPurchases] = useState<Purchase[]>(() => {
     const saved = localStorage.getItem('purchases');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          parsed.sort((a, b) => {
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+            const validA = !isNaN(timeA) ? timeA : 0;
+            const validB = !isNaN(timeB) ? timeB : 0;
+            if (validB !== validA) return validB - validA;
+            const idA = Number(a.id) || 0;
+            const idB = Number(b.id) || 0;
+            return idB - idA;
+          });
+          return parsed;
+        }
+      } catch (e) { console.error("Error parsing purchases:", e); }
     }
     return [];
   });
@@ -304,6 +356,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('purchases', JSON.stringify(purchases));
   }, [purchases]);
+
+
 
   const [isSavingSale, setIsSavingSale] = useState(false);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
@@ -403,7 +457,10 @@ export default function App() {
   const [liveConfig, setLiveConfig] = useState<LiveConfig>(() => {
     const saved = localStorage.getItem('liveConfig');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing liveConfig:", e); }
     }
     return {
       isActive: false,
@@ -414,7 +471,11 @@ export default function App() {
 
   useEffect(() => {
     if (selectedCustomer) {
-      setEditingName(selectedCustomer.nome_completo === 'Novo Cliente' ? '' : selectedCustomer.nome_completo);
+      if (selectedCustomer.nome_completo === 'Novo Cliente') {
+        setEditingName(selectedCustomer.username.replace(/^@/, '').replace(/^"/, '').split(',')[0].trim());
+      } else {
+        setEditingName(selectedCustomer.nome_completo);
+      }
     }
   }, [selectedCustomer]);
 
@@ -424,10 +485,43 @@ export default function App() {
       setDataLive(liveConfig.date);
     }
   }, [liveConfig]);
+
+  // Attempt to auto-sync the active live from the database when first loading or missing local state
+  useEffect(() => {
+    const fetchActiveLiveDate = async () => {
+      if (!supabase || liveConfig.isActive) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('live_vendas')
+          .select('data_live')
+          .eq('status', 'pendente')
+          .order('data_live', { ascending: false })
+          .limit(1);
+
+        if (!error && data && data.length > 0) {
+          const latestLiveDate = data[0].data_live;
+          console.log('Automagically connecting to active live:', latestLiveDate);
+          setLiveConfig({
+            isActive: true,
+            date: latestLiveDate,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to auto-fetch active live', err);
+      }
+    };
+
+    fetchActiveLiveDate();
+  }, [supabase, liveConfig.isActive]);
+
   const [manualPaidIds, setManualPaidIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('manualPaidIds');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing manualPaidIds:", e); }
     }
     return [];
   });
@@ -435,73 +529,152 @@ export default function App() {
   const [deliveredIds, setDeliveredIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('deliveredIds');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) {}
+      try { 
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing deliveredIds:", e); }
     }
     return [];
   });
 
-  // Recovery logic on load
-  useEffect(() => {
-    const recoverData = async () => {
-      if (!supabase || !liveConfig.isActive) return;
+  // Recovery/Sync logic
+  const recoverData = useCallback(async (forced = false) => {
+    if (!supabase || !liveConfig.isActive) return;
+    
+    // If not forced, optionally avoid overwriting. But we want robust sync, so default is forced = true.
+    try {
+      console.log('Fetching synced data from Supabase...');
+      const { data: vendas, error: vError } = await supabase
+        .from('live_vendas')
+        .select(`
+          *,
+          live_vendas_itens (*),
+          live_clientes (id, username, nome_completo, codigo_cliente)
+        `)
+        .eq('data_live', dataLive);
       
-      // Only recover if local state is empty to avoid overwriting recent unsaved changes
-      if (purchases.length === 0 && shoppingList.length === 0) {
-        try {
-          console.log('Attempting to recover data from Supabase...');
-          const { data: vendas, error: vError } = await supabase
-            .from('live_vendas')
-            .select(`
-              *,
-              live_vendas_itens (*)
-            `)
-            .eq('data_live', dataLive);
+      if (vError) throw vError;
+
+      if (vendas) {
+        const recoveredPurchases: Purchase[] = [];
+        const recoveredShoppingList: Customer[] = [];
+        const recoveredManualPaid: string[] = [];
+        const recoveredDelivered: string[] = [];
+
+        for (const v of vendas) {
+          const cidStr = String(v.cliente_id);
           
-          if (vError) throw vError;
-
-          if (vendas && vendas.length > 0) {
-            const recoveredPurchases: Purchase[] = [];
-            const recoveredShoppingList: Customer[] = [];
-
-            for (const v of vendas) {
-              // Add to shopping list if not already there
-              const customer = customers.find(c => Number(c.id) === Number(v.cliente_id));
-              if (customer && !recoveredShoppingList.some(c => c.id === customer.id)) {
-                recoveredShoppingList.push({
-                  ...customer,
-                  purchaseCount: v.live_vendas_itens?.length || 0
-                });
-              }
-
-              // Add items to purchases
-              if (v.live_vendas_itens) {
-                for (const item of v.live_vendas_itens) {
-                  recoveredPurchases.push({
-                    id: Math.random().toString(36).substr(2, 9),
-                    venda_id: v.id,
-                    customerId: v.cliente_id,
-                    reference: item.referencia,
-                    value: item.preco,
-                    quantity: item.quantidade,
-                    paid: v.pago,
-                    timestamp: new Date(v.created_at)
-                  });
-                }
-              }
-            }
-
-            if (recoveredPurchases.length > 0) setPurchases(recoveredPurchases);
-            if (recoveredShoppingList.length > 0) setShoppingList(recoveredShoppingList);
-            console.log('Recovery successful:', recoveredPurchases.length, 'items recovered.');
+          if (v.pago) {
+            recoveredManualPaid.push(cidStr);
           }
-        } catch (err) {
-          console.error('Error recovering data:', err);
-        }
-      }
-    };
+          if ((v as any).entregue) {
+            recoveredDelivered.push(cidStr);
+          }
 
-    recoverData();
-  }, [liveConfig.isActive, customers.length]);
+          // Add to shopping list if not already there
+          const clientData: any = v.live_clientes;
+          let customer = customersRef.current.find(c => String(c.id) === cidStr);
+          
+          // Use joined client data if local customer is not loaded yet
+          if (!customer && clientData) {
+              customer = {
+                  id: clientData.id,
+                  username: clientData.username,
+                  nome_completo: clientData.nome_completo,
+                  codigo_cliente: clientData.codigo_cliente,
+                  purchaseCount: v.qtd_live || 0
+              };
+          }
+
+          if (customer && !recoveredShoppingList.some(c => String(c.id) === cidStr)) {
+            recoveredShoppingList.push({
+              ...customer,
+              purchaseCount: v.qtd_live || 0
+            });
+          }
+
+          // Add items to purchases
+          if (v.live_vendas_itens) {
+            for (const item of v.live_vendas_itens) {
+              recoveredPurchases.push({
+                id: String(item.id),
+                venda_id: String(v.id),
+                customerId: v.cliente_id,
+                reference: item.referencia,
+                value: item.preco,
+                quantity: item.quantidade,
+                paid: v.pago,
+                timestamp: new Date(item.created_at || v.created_at)
+              });
+            }
+          }
+        }
+
+        // Sort recovered purchases by timestamp descending (newest first)
+        // If timestamps are identical, sort by ID descending (higher ID first)
+        recoveredPurchases.sort((a, b) => {
+          const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+          const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+          const validA = !isNaN(timeA) ? timeA : 0;
+          const validB = !isNaN(timeB) ? timeB : 0;
+          if (validB !== validA) return validB - validA;
+          const idA = Number(a.id) || 0;
+          const idB = Number(b.id) || 0;
+          return idB - idA;
+        });
+
+        // Always overwrite to force sync!
+        setPurchases(recoveredPurchases);
+        setShoppingList(recoveredShoppingList);
+        setManualPaidIds(recoveredManualPaid);
+        setDeliveredIds(recoveredDelivered);
+        
+        console.log('Sync successful:', recoveredPurchases.length, 'items loaded.');
+      }
+    } catch (err) {
+      console.error('Error recovering data:', err);
+    }
+  }, [liveConfig.isActive, dataLive, supabase]);
+
+  // Initial Sync on Load
+  useEffect(() => {
+    recoverData(true);
+  }, [recoverData]);
+
+  // Realtime Sync for Vendas (Pago/Entregue) and Itens (Sales additions/removals)
+  useEffect(() => {
+    if (!supabase || !liveConfig.isActive) return;
+
+    console.log('[Realtime] Creating channel live_vendas_sync for', dataLive);
+
+    const channel = supabase.channel('live_vendas_sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'live_vendas' },
+        (payload) => {
+          // If a row was updated, check if it's the current live, then sync
+          if (payload.new && (payload.new as any).data_live === dataLive) {
+            recoverData(); 
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'live_vendas_itens' },
+        (_payload) => {
+          // An item was added, updated or deleted. Just resync everything for safety.
+          recoverData();
+        }
+      )
+      .subscribe((status, err) => {
+        if (err) console.error('Error subscribing to Supabase Realtime Sync:', err);
+      });
+
+    return () => {
+      console.log('[Realtime] Removing channel live_vendas_sync');
+      supabase.removeChannel(channel).catch(err => console.error('Realtime removeChannel error:', err));
+    };
+  }, [supabase, liveConfig.isActive, dataLive, recoverData]);
 
   useEffect(() => {
     localStorage.setItem('manualPaidIds', JSON.stringify(manualPaidIds));
@@ -542,74 +715,38 @@ export default function App() {
     return str.toLowerCase().replace(/(?:^|\s)\S/g, (a) => a.toUpperCase());
   };
 
-  const getNextAvailableCustomerCode = async (): Promise<number> => {
-    if (!supabase) return 1;
-    
-    // Busca todos os códigos existentes (não nulos) ordenados
-    const { data: allCodes, error } = await supabase
-      .from('live_clientes')
-      .select('codigo_cliente')
-      .not('codigo_cliente', 'is', null)
-      .order('codigo_cliente', { ascending: true });
+  const getNextAvailableCustomerCode = (): number => {
+    const codes = customers
+      .map(c => Number(c.codigo_cliente))
+      .filter(code => !isNaN(code) && code > 0)
+      .sort((a, b) => a - b);
 
-    if (error || !allCodes || allCodes.length === 0) return 1;
-
-    const codes = allCodes.map(d => Number(d.codigo_cliente));
-    
-    // Se a lista não começar no 1, o primeiro buraco é o 1
+    if (codes.length === 0) return 1;
     if (codes[0] > 1) return 1;
 
-    // Procura o primeiro salto na sequência (ex: 1, 2, 5 -> buraco é 3)
     for (let i = 0; i < codes.length - 1; i++) {
       if (codes[i + 1] > codes[i] + 1) {
         return codes[i] + 1;
       }
     }
 
-    // Se não houver buracos no meio, pega o próximo após o último
     return codes[codes.length - 1] + 1;
   };
 
-  const getNextAvailableClientId = async (): Promise<number> => {
-    if (!supabase) {
-      // Fallback local se o Supabase não estiver configurado
-      const existingIds = customers
-        .map(c => Number(c.id))
-        .filter(id => !isNaN(id))
-        .sort((a, b) => a - b);
-      
-      if (existingIds.length === 0 || existingIds[0] > 1) return 1;
-      
-      for (let i = 0; i < existingIds.length - 1; i++) {
-        if (existingIds[i + 1] > existingIds[i] + 1) {
-          return existingIds[i] + 1;
-        }
-      }
-      return (existingIds[existingIds.length - 1] || 0) + 1;
-    }
+  const getNextAvailableClientId = (): number => {
+    const existingIds = customers
+      .map(c => Number(c.id))
+      .filter(id => !isNaN(id) && id > 0)
+      .sort((a, b) => a - b);
     
-    // Busca todos os IDs existentes ordenados para encontrar o primeiro "buraco"
-    const { data: allIds, error } = await supabase
-      .from('live_clientes')
-      .select('id')
-      .order('id', { ascending: true });
-
-    if (error || !allIds || allIds.length === 0) return 1;
-
-    const ids = allIds.map(d => Number(d.id));
+    if (existingIds.length === 0 || existingIds[0] > 1) return 1;
     
-    // Se a lista não começar no 1, o primeiro buraco é o 1
-    if (ids[0] > 1) return 1;
-
-    // Procura o primeiro salto na sequência (ex: 1, 2, 6 -> buraco é 3)
-    for (let i = 0; i < ids.length - 1; i++) {
-      if (ids[i + 1] > ids[i] + 1) {
-        return ids[i] + 1;
+    for (let i = 0; i < existingIds.length - 1; i++) {
+      if (existingIds[i + 1] > existingIds[i] + 1) {
+        return existingIds[i] + 1;
       }
     }
-
-    // Se não houver buracos no meio, pega o próximo após o último
-    return ids[ids.length - 1] + 1;
+    return existingIds[existingIds.length - 1] + 1;
   };
 
   // Optimization: Global customers map for O(1) lookups
@@ -646,7 +783,6 @@ export default function App() {
     // Isso garante que só sejam aceitos códigos que vieram da tela "live lista de compras"
     const found = shoppingList.find(c => 
       String(c.codigo_cliente || "").toLowerCase() === search ||
-      String(c.id).toLowerCase() === search || 
       (c.username || '').toLowerCase().trim() === search
     );
 
@@ -772,14 +908,13 @@ export default function App() {
     // Filter and Sort
     const filtered = customers
       .filter(c => {
-        const idStr = String(c.id || "").toLowerCase();
         const codeStr = c.codigo_cliente !== null && c.codigo_cliente !== undefined ? String(c.codigo_cliente) : "";
         const usernameStr = normalize(c.username || "");
         const nameStr = normalize(c.nome_completo || "");
         
-        // Se a query for apenas números, busca exata no código ou ID
+        // Se a query for apenas números, busca exata no código
         if (/^\d+$/.test(cleanQuery)) {
-          return codeStr === cleanQuery || idStr === cleanQuery || codeStr.includes(cleanQuery);
+          return codeStr === cleanQuery || codeStr.includes(cleanQuery);
         }
 
         // Permite busca por partes do código, username ou nome
@@ -794,8 +929,6 @@ export default function App() {
       .sort((a, b) => {
         const aCode = String(a.codigo_cliente || "").toLowerCase();
         const bCode = String(b.codigo_cliente || "").toLowerCase();
-        const aId = String(a.id || "").toLowerCase();
-        const bId = String(b.id || "").toLowerCase();
         const aUser = normalize(a.username || "");
         const bUser = normalize(b.username || "");
 
@@ -803,11 +936,7 @@ export default function App() {
         if (aCode === cleanQuery && bCode !== cleanQuery) return -1;
         if (aCode !== cleanQuery && bCode === cleanQuery) return 1;
 
-        // 2. Exact ID match
-        if (aId === cleanQuery && bId !== cleanQuery) return -1;
-        if (aId !== cleanQuery && bId === cleanQuery) return 1;
-
-        // 3. Exact Username match
+        // 2. Exact Username match
         if (aUser === cleanQuery && bUser !== cleanQuery) return -1;
         if (aUser !== cleanQuery && bUser === cleanQuery) return 1;
 
@@ -831,30 +960,71 @@ export default function App() {
     setActiveIndex(filtered.length > 0 ? 0 : -1);
   }, [searchQuery, customers]);
 
-  // Search Logic
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-
-    // If we have filtered results, pick the active one or the first one
-    if (filteredResults.length > 0) {
-      const selected = activeIndex >= 0 ? filteredResults[activeIndex] : filteredResults[0];
-      
-      // GARANTIA: Se o cliente selecionado do dropdown não tiver código, geramos agora ANTES de abrir o modal
-      if (!selected.codigo_cliente) {
-        const nextCode = await getNextAvailableCustomerCode();
-        setSelectedCustomer({ ...selected, codigo_cliente: nextCode });
+  const processCustomerSelection = async (customer: Customer | null, searchQueryText: string) => {
+    if (customer) {
+      if (!customer.codigo_cliente) {
+        const nextCode = getNextAvailableCustomerCode();
+        const updated = { ...customer, codigo_cliente: nextCode };
+        
+        if (supabase) {
+          try {
+            const { error } = await supabase.from('live_clientes').update({ codigo_cliente: nextCode }).eq('id', customer.id);
+            if (error) console.error('Error updating customer code:', error);
+          } catch (err) {
+            console.error('Promise rejection updating customer code:', err);
+          }
+        }
+        
+        setCustomers(prev => prev.map(c => String(c.id) === String(customer.id) ? updated : c));
+        setSelectedCustomer(updated);
       } else {
-        setSelectedCustomer(selected);
+        setSelectedCustomer(customer);
+      }
+    } else {
+      const cleanQuery = normalize(searchQueryText);
+      const nextId = getNextAvailableClientId(); 
+      const nextCode = getNextAvailableCustomerCode();
+      
+      const newCustomer: Customer = {
+        id: nextId,
+        codigo_cliente: nextCode,
+        username: /^\d+$/.test(cleanQuery) ? '' : searchQueryText,
+        nome_completo: 'Novo Cliente',
+        purchaseCount: 0
+      };
+
+      if (supabase) {
+        try {
+          const { error } = await supabase.from('live_clientes').insert({
+            id: nextId,
+            codigo_cliente: nextCode,
+            username: newCustomer.username,
+            nome_completo: newCustomer.nome_completo
+          });
+          if (error) console.error('Error reserving new customer:', error);
+        } catch (err) {
+          console.error('Promise rejection reserving new customer:', err);
+        }
       }
       
-      setSearchQuery('');
-      setFilteredResults([]);
-      setActiveIndex(-1);
+      setCustomers(prev => [...prev, newCustomer].sort((a, b) => (a.username || '').localeCompare(b.username || '')));
+      setSelectedCustomer(newCustomer);
+    }
+
+    setSearchQuery('');
+    setFilteredResults([]);
+    setActiveIndex(-1);
+  };
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim() || isSavingSale) return;
+
+    if (filteredResults.length > 0) {
+      const selected = activeIndex >= 0 ? filteredResults[activeIndex] : filteredResults[0];
+      processCustomerSelection(selected, searchQuery);
       return;
     }
 
-    // Fallback: search in Supabase customers directly or create temporary
     const rawQuery = searchQuery.startsWith('@') ? searchQuery.slice(1) : searchQuery;
     const cleanQuery = normalize(rawQuery);
     
@@ -863,9 +1033,8 @@ export default function App() {
       const nStr = normalize(c.nome_completo || "");
       const codeStr = c.codigo_cliente !== null && c.codigo_cliente !== undefined ? String(c.codigo_cliente) : "";
       
-      // Se a query for apenas números, prioriza check exato no código (Sacola)
       if (/^\d+$/.test(cleanQuery)) {
-        return codeStr === cleanQuery || String(c.id) === cleanQuery;
+        return codeStr === cleanQuery;
       }
       
       return codeStr === cleanQuery || 
@@ -874,123 +1043,114 @@ export default function App() {
              (uStr + " " + nStr) === cleanQuery;
     });
 
-    if (found) {
-      // Se a cliente já existe mas não tem código (vinda do estoque, por exemplo)
-      if (!found.codigo_cliente) {
-        const nextCode = await getNextAvailableCustomerCode();
-        setSelectedCustomer({ ...found, codigo_cliente: nextCode });
-      } else {
-        setSelectedCustomer(found);
-      }
-    } else {
-      // É um novo cliente, geramos o código da sacola IMEDIATAMENTE para aparecer no modal
-      const nextId = await getNextAvailableClientId();
-      const nextCode = await getNextAvailableCustomerCode();
-
-      setSelectedCustomer({
-        id: nextId,
-        codigo_cliente: nextCode,
-        username: /^\d+$/.test(cleanQuery) ? '' : searchQuery,
-        nome_completo: 'Novo Cliente',
-        purchaseCount: 0
-      });
-    }
-    setSearchQuery('');
-    setFilteredResults([]);
+    processCustomerSelection(found || null, searchQuery);
   };
 
-  const confirmPurchase = useCallback(async () => {
-    if (selectedCustomer) {
-      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      
-      const finalName = (selectedCustomer.nome_completo === 'Novo Cliente' && editingName.trim()) 
-        ? editingName.trim() 
-        : selectedCustomer.nome_completo;
+  const [isConfirmingPurchase, setIsConfirmingPurchase] = useState(false);
 
-      // Update shopping list
-      const exists = shoppingList.find(c => String(c.id) === String(selectedCustomer.id));
-      let updatedCustomer: Customer;
-      const qtdLive = exists ? (exists.purchaseCount || 0) + 1 : 1;
-      
-      if (exists) {
-        updatedCustomer = { 
-          ...exists, 
-          nome_completo: finalName,
-          purchaseCount: qtdLive, 
-          lastPurchaseTime: now 
-        };
-        setShoppingList(prev => prev.map(c => 
-          String(c.id) === String(selectedCustomer.id) ? updatedCustomer : c
-        ));
-      } else {
-        updatedCustomer = { 
-          ...selectedCustomer, 
-          nome_completo: finalName,
-          purchaseCount: qtdLive, 
-          lastPurchaseTime: now 
-        };
-        setShoppingList(prev => [updatedCustomer, ...prev]);
+  const confirmPurchase = useCallback(async () => {
+    if (selectedCustomer && !isConfirmingPurchase) {
+      if (!supabase) {
+        showToast('⚠️ Erro crítico: Sem conexão com o banco de dados!');
+        return;
       }
       
-      // Add to timeline (we want to see the state at that moment)
-      setTimeline(prev => [updatedCustomer, ...prev].slice(0, 10));
-      setSelectedCustomer(null);
-      setEditingName('');
+      setIsConfirmingPurchase(true);
+      
+      try {
+        const finalName = (selectedCustomer.nome_completo === 'Novo Cliente' && editingName.trim()) 
+          ? editingName.trim() 
+          : selectedCustomer.nome_completo;
 
-      // BACKEND SAVING (Background - Non-blocking)
-      if (supabase) {
-        const syncVenda = async () => {
-          try {
-            const customerCode = selectedCustomer.codigo_cliente;
-            
-            // 1. Primeiro garante que o cliente existe ou está atualizado
-            const { error: cError } = await supabase
-              .from('live_clientes')
-              .upsert({
-                id: Number(selectedCustomer.id),
-                username: selectedCustomer.username,
-                nome_completo: finalName,
-                codigo_cliente: customerCode
-              });
-            
-            if (cError) throw cError;
+        const customerCode = selectedCustomer.codigo_cliente;
+        const exists = shoppingListRef.current.find(c => String(c.id) === String(selectedCustomer.id));
+        const qtdLive = exists ? (exists.purchaseCount || 0) + confirmQty : confirmQty;
 
-            // Se for um cliente novo (que não estava na lista mestre), adicionamos agora para buscas futuras
-            setCustomers(prev => {
-              const alreadyInList = prev.some(c => String(c.id) === String(selectedCustomer.id));
-              if (!alreadyInList) {
-                return [...prev, {
-                  id: Number(selectedCustomer.id),
-                  username: selectedCustomer.username,
-                  nome_completo: finalName,
-                  codigo_cliente: customerCode
-                }].sort((a, b) => a.username.localeCompare(b.username));
-              }
-              return prev;
-            });
+        // 1. Garante de forma síncrona que o cliente existe
+        const { error: cError } = await supabase
+          .from('live_clientes')
+          .upsert({
+            id: Number(selectedCustomer.id),
+            username: selectedCustomer.username,
+            nome_completo: finalName,
+            codigo_cliente: customerCode
+          });
+        
+        if (cError) throw cError;
 
-            // 2. Depois salva a venda
-            const { error: vError } = await supabase
-              .from('live_vendas')
-              .upsert({
-                cliente_id: Number(selectedCustomer.id),
-                data_live: liveConfig.date,
-                qtd_live: qtdLive,
-                pago: false,
-                status: 'pendente'
-              }, { onConflict: 'cliente_id,data_live' }); // Removido espaço para compatibilidade total
+        // 2. Garante de forma síncrona a venda
+        const { error: vError } = await supabase
+          .from('live_vendas')
+          .upsert({
+            cliente_id: Number(selectedCustomer.id),
+            data_live: liveConfig.date,
+            qtd_live: qtdLive,
+            pago: false,
+            status: 'pendente'
+          }, { onConflict: 'cliente_id,data_live' });
 
-            if (vError) throw vError;
-          } catch (error: any) {
-            console.error('Erro ao sincronizar venda/cliente:', error);
-            const msg = error.message || 'Erro de conexão';
-            showToast(`⚠️ Erro no banco: ${msg}`);
+        if (vError) throw vError;
+
+        // ATUALIZAÇÃO LOCAL APÓS SUCESSO NO BANCO:
+        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        let updatedCustomer: Customer;
+        
+        if (exists) {
+          updatedCustomer = { 
+            ...exists, 
+            nome_completo: finalName,
+            purchaseCount: qtdLive, 
+            lastPurchaseTime: now 
+          };
+          shoppingListRef.current = shoppingListRef.current.map(c => 
+            String(c.id) === String(selectedCustomer.id) ? updatedCustomer : c
+          );
+        } else {
+          updatedCustomer = { 
+            ...selectedCustomer, 
+            nome_completo: finalName,
+            purchaseCount: qtdLive, 
+            lastPurchaseTime: now 
+          };
+          shoppingListRef.current = [updatedCustomer, ...shoppingListRef.current];
+        }
+        
+        setShoppingList(shoppingListRef.current);
+        setTimeline(prev => [updatedCustomer, ...prev].slice(0, 10));
+        
+        setCustomers(prev => {
+          const existingIndex = prev.findIndex(c => String(c.id) === String(selectedCustomer.id));
+          if (existingIndex >= 0) {
+            const newArray = [...prev];
+            newArray[existingIndex] = {
+              ...newArray[existingIndex],
+              nome_completo: finalName,
+              codigo_cliente: customerCode
+            };
+            return newArray;
+          } else {
+            return [...prev, {
+              id: Number(selectedCustomer.id),
+              username: selectedCustomer.username,
+              nome_completo: finalName,
+              codigo_cliente: customerCode
+            }].sort((a, b) => a.username.localeCompare(b.username));
           }
-        };
-        syncVenda();
+        });
+
+        // Limpa o modal
+        setSelectedCustomer(null);
+        setEditingName('');
+        
+      } catch (error: any) {
+        console.error('Erro bloqueante ao confirmar venda:', error);
+        const msg = error.message || 'Erro de conexão';
+        showToast(`⚠️ ERRO GRAVE: Venda NÃO registrada! Tente de novo. (${msg})`);
+      } finally {
+        setIsConfirmingPurchase(false);
       }
     }
-  }, [selectedCustomer, shoppingList, editingName, liveConfig, supabase]);
+  }, [selectedCustomer, editingName, liveConfig, supabase, isConfirmingPurchase, confirmQty]);
 
   // Keyboard shortcuts for the identification modal
   useEffect(() => {
@@ -1048,69 +1208,91 @@ export default function App() {
     return true;
   };
 
+  const [isSubmittingAcerto, setIsSubmittingAcerto] = useState(false);
+
   const executeAcertoSubmit = async () => {
-    if (!acertoId || !acertoRef || !acertoValue || !acertoQuantity) return;
+    if (!acertoId || !acertoRef || !acertoValue || !acertoQuantity || isSubmittingAcerto) return;
 
     const activeCustomer = acertoActiveCustomer;
     if (!activeCustomer) return;
 
+    if (!supabase) {
+      showToast('⚠️ Erro crítico: Sem conexão com o banco de dados!');
+      return;
+    }
+
     const val = parseFloat(acertoValue);
     const qty = parseInt(acertoQuantity);
-    const newPurchase: Purchase = {
-      id: Math.random().toString(36).substr(2, 9),
-      customerId: Number(activeCustomer.id),
-      reference: acertoRef.trim().toUpperCase(),
-      value: val,
-      quantity: qty,
-      paid: false,
-      timestamp: new Date()
-    };
+    setIsSubmittingAcerto(true);
 
-    setPurchases(prev => [newPurchase, ...prev]);
-    setAcertoId('');
-    setAcertoRef('');
-    setAcertoValue('');
-    setAcertoQuantity('1');
-    idInput.current?.focus();
+    try {
+      // 1. Garante que a venda (header) existe de forma síncrona
+      const { data: venda, error: vError } = await supabase
+        .from('live_vendas')
+        .upsert({
+          cliente_id: Number(activeCustomer.id),
+          data_live: liveConfig.date,
+          pago: false,
+          status: 'pendente'
+        }, { onConflict: 'cliente_id,data_live' })
+        .select('id')
+        .single();
 
-    showToast(`✅ Lançado: ${qty}x ${newPurchase.reference} p/ ${activeCustomer.nome_completo}`);
+      if (vError) throw vError;
+      if (!venda) throw new Error('Falha ao registrar cabeçalho da venda');
+      
+      // 2. Insere o item vinculado à venda
+      const { data: insertedItem, error: iError } = await supabase
+        .from('live_vendas_itens')
+        .insert({
+          venda_id: venda.id,
+          referencia: acertoRef.trim().toUpperCase(),
+          preco: val,
+          quantidade: qty
+        }).select('id').single();
 
-    // BACKEND SAVING (Background - Non-blocking)
-    if (supabase) {
-      const syncItem = async () => {
-        try {
-          // 1. Garante que a venda (header) existe
-          const { data: venda, error: vError } = await supabase
-            .from('live_vendas')
-            .upsert({
-              cliente_id: Number(activeCustomer.id),
-              data_live: liveConfig.date,
-              pago: false,
-              status: 'pendente'
-            }, { onConflict: 'cliente_id,data_live' })
-            .select('id')
-            .single();
+      if (iError || !insertedItem) throw iError || new Error('Falha ao registrar o item');
 
-          if (vError) throw vError;
-          if (!venda) throw new Error('Venda não encontrada');
-          
-          // 2. Insere o item vinculado à venda
-          const { error: iError } = await supabase
-            .from('live_vendas_itens')
-            .insert({
-              venda_id: venda.id,
-              referencia: newPurchase.reference,
-              preco: val,
-              quantidade: qty
-            });
-
-          if (iError) throw iError;
-        } catch (error) {
-          console.error('Erro ao sincronizar item em background:', error);
-          showToast('⚠️ Erro ao sincronizar item com o banco');
-        }
+      // 3. Monta e adiciona o objeto no estado APÓS sucesso no banco
+      const newPurchase: Purchase = {
+        id: String(insertedItem.id),
+        venda_id: String(venda.id),
+        customerId: Number(activeCustomer.id),
+        reference: acertoRef.trim().toUpperCase(),
+        value: val,
+        quantity: qty,
+        paid: false,
+        timestamp: new Date()
       };
-      syncItem();
+
+      setPurchases(prev => {
+        const updated = [newPurchase, ...prev];
+        updated.sort((a, b) => {
+          const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+          const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+          const validA = !isNaN(timeA) ? timeA : 0;
+          const validB = !isNaN(timeB) ? timeB : 0;
+          if (validB !== validA) return validB - validA;
+          const idA = Number(a.id) || 0;
+          const idB = Number(b.id) || 0;
+          return idB - idA;
+        });
+        return updated;
+      });
+      
+      // Limpa formulário apenas no sucesso
+      setAcertoId('');
+      setAcertoRef('');
+      setAcertoValue('');
+      setAcertoQuantity('1');
+      idInput.current?.focus();
+
+      showToast(`✅ Lançado: ${qty}x ${newPurchase.reference} p/ ${activeCustomer.nome_completo}`);
+    } catch (error) {
+      console.error('Erro bloqueante ao registrar venda:', error);
+      showToast('⚠️ ERRO GRAVE CRÍTICO: Venda NÃO REGISTRADA no banco! Tente novamente.');
+    } finally {
+      setIsSubmittingAcerto(false);
     }
   };
 
@@ -1126,13 +1308,18 @@ export default function App() {
       return;
     }
 
-    const isValid = await validateRef(acertoRef, 'submit');
-    if (!isValid) {
-      refInput.current?.focus();
-      return;
-    }
+    try {
+      const isValid = await validateRef(acertoRef, 'submit');
+      if (!isValid) {
+        refInput.current?.focus();
+        return;
+      }
 
-    await executeAcertoSubmit();
+      await executeAcertoSubmit();
+    } catch (err) {
+      console.error('Promise rejection during acerto submission:', err);
+      showToast('⚠️ Erro ao tentar lançar o acerto.');
+    }
   };
 
   const confirmInvalidRefModal = () => {
@@ -1160,25 +1347,86 @@ export default function App() {
   };
 
 
-  const removePurchase = (id: string) => {
-    setPurchases(prev => {
-      const existing = prev.find(p => String(p.id) === String(id));
-      if (existing && existing.quantity > 1) {
-        return prev.map(p => 
-          String(p.id) === String(id) 
-            ? { ...p, quantity: p.quantity - 1 }
-            : p
-        );
+  const [isRemovingItem, setIsRemovingItem] = useState(false);
+
+  const removePurchase = async (id: string) => {
+    if (isRemovingItem) return;
+    setIsRemovingItem(true);
+
+    try {
+      const existing = purchasesRef.current.find(p => String(p.id) === String(id));
+      if (!existing) return;
+
+      if (supabase) {
+        // Se a ID for local antiga (math.random), o Supabase pode dar erro de sintaxe,
+        // então englobamos num try/catch o banco, e caso dê erro, 
+        // prosseguimos com o delete local se for id sem formato válido de BD.
+        if (existing.quantity > 1) {
+          // Atualiza quantidade
+          const { error } = await supabase
+            .from('live_vendas_itens')
+            .update({ quantidade: existing.quantity - 1 })
+            .eq('id', id);
+          if (error && !error.message.includes('uuid') && !error.message.includes('integer')) throw error;
+        } else {
+          // Deleta item
+          const { error } = await supabase
+            .from('live_vendas_itens')
+            .delete()
+            .eq('id', id);
+          if (error && !error.message.includes('uuid') && !error.message.includes('integer')) throw error;
+        }
       }
-      return prev.filter(p => String(p.id) !== String(id));
-    });
+
+      // Sucesso ou era ID local antigo: reflete estado
+      setPurchases(prev => {
+        const item = prev.find(p => String(p.id) === String(id));
+        if (item && item.quantity > 1) {
+          return prev.map(p => 
+            String(p.id) === String(id) ? { ...p, quantity: p.quantity - 1 } : p
+          );
+        }
+        return prev.filter(p => String(p.id) !== String(id));
+      });
+
+    } catch (e: any) {
+      console.error('Erro ao remover compra:', e);
+      showToast('⚠️ ERRO CRÍTICO: Não foi possível remover do banco!');
+    } finally {
+      setIsRemovingItem(false);
+    }
   };
 
-  const removeGroup = (customerId: number) => {
-    setPurchases(prev => prev.filter(p => String(p.customerId) !== String(customerId)));
-    setShoppingList(prev => prev.filter(c => String(c.id) !== String(customerId)));
-    setDeleteModal(null);
-    setContextMenu(null);
+  const removeGroup = async (customerId: number) => {
+    if (isRemovingItem) return;
+    setIsRemovingItem(true);
+    
+    try {
+      if (supabase) {
+        // Obter itens locais desse grupo para apagar do banco
+        const groupItems = purchasesRef.current.filter(p => Number(p.customerId) === customerId);
+        const itemIds = groupItems.map(p => p.id);
+        
+        if (itemIds.length > 0) {
+          const { error } = await supabase
+            .from('live_vendas_itens')
+            .delete()
+            .in('id', itemIds);
+          // Ignoramos erro de formatação se havia IDs locais velhos
+          if (error && !error.message.includes('uuid') && !error.message.includes('integer')) throw error;
+        }
+      }
+
+      setPurchases(prev => prev.filter(p => Number(p.customerId) !== customerId));
+      setShoppingList(prev => prev.filter(c => Number(c.id) !== customerId));
+      setDeleteModal(null);
+      setContextMenu(null);
+    } catch (e: any) {
+      console.error('Erro ao remover grupo:', e);
+      showToast('⚠️ ERRO CRÍTICO: Não foi possível remover a sacola do banco!');
+    } finally {
+      setIsRemovingItem(false);
+    }
   };
 
   const groupedPurchases = useMemo(() => {
@@ -1206,8 +1454,8 @@ export default function App() {
         total: customerPurchases.reduce((acc, p) => acc + (p.value * p.quantity), 0),
         paid: isPaid,
         delivered: deliveredIds.includes(String(cid)),
-        qtdLive: latestCustomer.purchaseCount || 0,
-        codigo_cliente: latestCustomer.codigo_cliente
+        qtdLive: customer.purchaseCount || 0,
+        codigo_cliente: latestCustomer.codigo_cliente || customer.codigo_cliente
       };
     });
 
@@ -1235,6 +1483,36 @@ export default function App() {
     }
 
     const all = [...list, ...manualGroups];
+    
+    // Sort so that the last active customer (newest item timestamp) is at the top.
+    all.sort((a, b) => {
+      const getLatestTime = (group: any) => {
+        if (!group.items || group.items.length === 0) return 0;
+        let max = 0;
+        for (const item of group.items) {
+          const t = item.timestamp ? new Date(item.timestamp).getTime() : 0;
+          if (!isNaN(t) && t > max) {
+            max = t;
+          }
+        }
+        return max;
+      };
+      
+      const timeA = getLatestTime(a);
+      const timeB = getLatestTime(b);
+      
+      if (timeB !== timeA) {
+        return timeB - timeA; // descending (newest activity first)
+      }
+      
+      // Secondary sort: by customerId or codigo_cliente to keep search stable
+      const codeA = Number(a.codigo_cliente) || 0;
+      const codeB = Number(b.codigo_cliente) || 0;
+      if (codeB !== codeA) return codeA - codeB; // lowest code first
+      
+      return String(a.username).localeCompare(String(b.username));
+    });
+
     const totalValue = purchases.reduce((acc, p) => acc + (p.value * p.quantity), 0);
     const totalPaidValue = all.filter(g => g.paid).reduce((acc, g) => acc + g.total, 0);
     const uniqueCustomersCount = purchasesByCustomer.size;
@@ -1252,15 +1530,6 @@ export default function App() {
     
     let groups = groupedPurchases.groups;
 
-    // Apply Tab Filter
-    if (bagFilterTab === 'pagas') {
-      groups = groups.filter(g => g.paid);
-    } else if (bagFilterTab === 'a_pagar') {
-      groups = groups.filter(g => !g.paid);
-    } else if (bagFilterTab === 'entregues') {
-      groups = groups.filter(g => g.delivered);
-    }
-
     if (!search) return groups;
     
     return groups.filter(group => {
@@ -1274,7 +1543,22 @@ export default function App() {
              id.includes(search) ||
              code === search;
     });
-  }, [groupedPurchases.groups, fechamentoSearch, bagFilterTab]);
+  }, [groupedPurchases.groups, fechamentoSearch]);
+
+  const filteredBagGroups = useMemo(() => {
+    let groups = filteredGroups;
+
+    // Apply Tab Filter Specifically for Sacolas
+    if (bagFilterTab === 'pagas') {
+      groups = groups.filter(g => g.paid);
+    } else if (bagFilterTab === 'a_pagar') {
+      groups = groups.filter(g => !g.paid);
+    } else if (bagFilterTab === 'entregues') {
+      groups = groups.filter(g => g.delivered);
+    }
+
+    return groups;
+  }, [filteredGroups, bagFilterTab]);
 
   // Keyboard navigation for Acerto table
   useEffect(() => {
@@ -1528,13 +1812,8 @@ export default function App() {
             .eq('id', vendaId);
           
           if (updateVendaError) throw updateVendaError;
-            
-          const { error: deleteItemsError } = await supabase
-            .from('live_vendas_itens')
-            .delete()
-            .eq('venda_id', vendaId);
-          
-          if (deleteItemsError) throw deleteItemsError;
+          // Deletes e INSERTS em lote foram REMOVIDOS daqui para blindagem.
+          // Agora dependemos de cada operação individual na live_vendas_itens.
         } else {
           const { data: newVenda, error: vError } = await supabase
             .from('live_vendas')
@@ -1553,20 +1832,8 @@ export default function App() {
           vendaId = newVenda.id;
         }
 
-        if (customerPurchases.length > 0) {
-          const itemsToInsert = customerPurchases.map(p => ({
-            venda_id: vendaId,
-            referencia: p.reference,
-            preco: p.value,
-            quantidade: p.quantity
-          }));
-
-          const { error: iError } = await supabase
-            .from('live_vendas_itens')
-            .insert(itemsToInsert);
-
-          if (iError) throw iError;
-        }
+        // Os itens da venda JÁ ESTÃO no banco graças às operações síncronas de executeAcertoSubmit e removePurchase.
+        // Portanto, o bloco que deletava e reinseria itens foi removido.
       }
 
       if (skippedCount > 0 && !isAuto) {
@@ -1632,9 +1899,12 @@ export default function App() {
       // 3. Se for FINALIZAR: Registrar Movimentações (A Trigger fará o resto)
       if (action === 'finalizar') {
         try {
-          // 1. Agrupar itens da lista atual (purchases)
+          // 1. Agrupar itens da lista atual (Purchases) APENAS das sacolas que foram pagas (targetCustomerIds)
           const stockToDeduct = new Map<string, number>();
+          const targetIdsNum = targetCustomerIds.map(Number);
+          
           for (const p of purchases) {
+            if (!targetIdsNum.includes(Number(p.customerId))) continue; // Ignora se a compra não for de uma sacola paga
             const ref = p.reference.trim().toUpperCase();
             const qty = Math.abs(Number(p.quantity));
             stockToDeduct.set(ref, (stockToDeduct.get(ref) || 0) + qty);
@@ -1773,40 +2043,64 @@ export default function App() {
     handleFinalizarAcertoRef.current = handleFinalizarAcerto;
   }, [purchases, shoppingList, liveConfig]);
 
-  // Auto-save to Supabase every 2 minutes (Background)
-  useEffect(() => {
-    if (!supabase) return;
-
-    const interval = setInterval(() => {
-      if (!liveConfigRef.current.isActive) return;
-      if (purchasesRef.current.length === 0 && shoppingListRef.current.length === 0) return;
-
-      const currentHash = JSON.stringify({ 
-        purchases: purchasesRef.current, 
-        shoppingList: shoppingListRef.current 
-      });
-
-      if (currentHash !== lastSavedHashRef.current) {
-        console.log('Auto-saving to Supabase (Background)...');
-        // We call the LATEST version of handleFinalizarAcerto via ref
-        handleFinalizarAcertoRef.current('salvar', true);
-        lastSavedHashRef.current = currentHash;
-      }
-    }, 1000 * 60 * 2);
-
-    return () => clearInterval(interval);
-  }, [supabase]);
-
-  const setGroupPaidStatus = (customerId: number, status: boolean) => {
+  const setGroupPaidStatus = async (customerId: number, status: boolean) => {
+    // Atualização otimista
     setPurchases(prev => prev.map(p => String(p.customerId) === String(customerId) ? { ...p, paid: status } : p));
     setManualPaidIds(prev => status ? [...prev, String(customerId)] : prev.filter(id => String(id) !== String(customerId)));
+
+    // Persistência assíncrona
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('live_vendas')
+          .update({ pago: status })
+          .eq('cliente_id', customerId)
+          .eq('data_live', liveConfig.date);
+        
+        if (error) throw error;
+      } catch (err) {
+        console.error('Erro ao salvar pagamento:', err);
+        showToast('⚠️ Erro ao salvar PAGAMENTO no banco!');
+        // Se quisermos reverter, poderia ser feito aqui.
+      }
+    }
   };
 
-  const toggleDelivered = (customerId: number) => {
+  const toggleDelivered = async (customerId: number) => {
     const id = String(customerId);
+    const isNowDelivered = !deliveredIds.includes(id);
+
+    // Otimisticamente atualiza a UI
     setDeliveredIds(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
+
+    // Persiste no banco de forma assíncrona
+    if (supabase) {
+      try {
+        const { error } = await supabase
+          .from('live_vendas')
+          .update({ entregue: isNowDelivered })
+          .eq('cliente_id', customerId)
+          .eq('data_live', liveConfig.date);
+        
+        if (error) {
+           // Fallback gracioso se a coluna "entregue" não existir
+           if (error.message && error.message.includes('entregue')) {
+               console.warn('Coluna "entregue" inexistente no banco. Use o editor SQL para cria-la (boolean, default false).');
+           } else {
+               throw error;
+           }
+        }
+      } catch (err: any) {
+        console.error('Erro ao salvar entrega:', err);
+        showToast('⚠️ Erro ao salvar ENTREGA no banco!');
+        // Reverte a alteração otimista
+        setDeliveredIds(prev => 
+           prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+      }
+    }
   };
 
   const saveTemplate = (newTemplate: string) => {
@@ -1866,7 +2160,7 @@ export default function App() {
     const message = generateMessageText(nome_completo, total);
     
     if (!username || username === 'N/A') {
-      navigator.clipboard.writeText(message);
+      navigator.clipboard.writeText(message).catch(err => console.error("Clipboard failure:", err));
       setSentMessages(prev => [...new Set([...prev, String(customerId)])]);
       alert('Mensagem copiada! (Nome de usuário não encontrado para abrir o Instagram)');
       return;
@@ -2307,16 +2601,9 @@ export default function App() {
                         <button
                           key={c.id}
                           ref={activeIndex === idx ? activeItemRef : null}
-                          onClick={async () => {
-                            if (!c.codigo_cliente) {
-                              const nextCode = await getNextAvailableCustomerCode();
-                              setSelectedCustomer({ ...c, codigo_cliente: nextCode });
-                            } else {
-                              setSelectedCustomer(c);
-                            }
-                            setSearchQuery('');
-                            setFilteredResults([]);
-                            setActiveIndex(-1);
+                          onClick={() => {
+                            if (isSavingSale) return;
+                            processCustomerSelection(c, searchQuery);
                           }}
                           className={cn(
                             "w-full flex items-center gap-4 p-3 transition-all border-b border-white/5 last:border-0 group/item",
@@ -2359,13 +2646,13 @@ export default function App() {
               {/* Listagem Layout */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                 {/* Left: Shopping List */}
-                <div className="lg:col-span-7 space-y-2">
+                <div className="lg:col-span-6 space-y-2">
                   <div className="flex items-center gap-3 border-l-4 border-[#ccff00] pl-4 mb-2">
                     <ShoppingBag className="text-[#ccff00] w-5 h-5" />
                     <h2 className="text-xl font-black tracking-tight uppercase">Lista de Compras</h2>
                   </div>
                   
-                  <div className="space-y-1">
+                  <div className="space-y-1 max-w-[70%]">
                     {shoppingList.map((customer) => (
                       <motion.div
                         layout
@@ -2373,17 +2660,17 @@ export default function App() {
                         onClick={() => setSelectedCustomer(customer)}
                         className="bg-[#111] border border-white/5 p-1.5 rounded-md flex items-center justify-between cursor-pointer hover:border-[#ccff00]/50 hover:bg-[#151515] transition-all group"
                       >
-                        <div className="flex items-center gap-6">
-                          <div className="w-16 flex justify-end">
-                            <span className="text-2xl font-black text-[#ccff00]/20 group-hover:text-[#ccff00]/40 transition-colors tracking-tighter">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 flex justify-end">
+                            <span className="text-xl font-black text-[#ccff00]/20 group-hover:text-[#ccff00]/40 transition-colors tracking-tighter">
                               {customer.codigo_cliente || ''}
                             </span>
                           </div>
-                          <div className="flex flex-col justify-center border-l border-white/10 pl-6 py-0.5">
-                            <div className="font-black text-sm md:text-base leading-tight text-white/90 uppercase tracking-tight">
+                          <div className="flex flex-col justify-center border-l border-white/10 pl-4 py-0.5">
+                            <div className="font-black text-xs md:text-sm leading-tight text-white/90 uppercase tracking-tight">
                               {cleanDisplay(customer.username)}
                             </div>
-                            <div className="text-white/30 text-[10px] md:text-xs uppercase truncate max-w-[200px] md:max-w-[320px] leading-tight font-medium tracking-widest mt-0.5">
+                            <div className="text-white/30 text-[9px] md:text-[10px] uppercase truncate max-w-[150px] md:max-w-[240px] leading-tight font-medium tracking-widest mt-0.5">
                               {cleanDisplay(customer.nome_completo || 'NOME NÃO CADASTRADO')}
                             </div>
                           </div>
@@ -2402,13 +2689,13 @@ export default function App() {
                 </div>
 
                 {/* Right: Timeline */}
-                <div className="lg:col-span-5 space-y-2">
+                <div className="lg:col-span-6 space-y-2">
                   <div className="flex items-center gap-3 border-l-4 border-[#ccff00]/40 pl-4 mb-2">
                     <History className="text-[#ccff00]/60 w-5 h-5" />
                     <h2 className="text-xl font-black tracking-tight text-white/60 uppercase">Timeline</h2>
                   </div>
 
-                  <div className="space-y-1">
+                  <div className="space-y-1 max-w-[70%]">
                     {timeline.map((c, idx) => (
                       <motion.div
                         layout
@@ -2485,6 +2772,7 @@ export default function App() {
                       type="text"
                       value={acertoId}
                       onChange={(e) => setAcertoId(e.target.value)}
+                      onFocus={() => setShowRecentPurchases(false)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
@@ -2518,6 +2806,7 @@ export default function App() {
                         onChange={(e) => {
                           setAcertoRef(e.target.value);
                         }}
+                        onFocus={() => setShowRecentPurchases(false)}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault();
@@ -2527,7 +2816,7 @@ export default function App() {
                                 // Foco imediato no preço se a referência for válida
                                 valueInput.current?.focus();
                               }
-                            });
+                            }).catch(err => console.error("validateRef error:", err));
                           }
                         }}
                         className={cn(
@@ -2546,6 +2835,7 @@ export default function App() {
                       step="0.01"
                       value={acertoValue}
                       onChange={(e) => setAcertoValue(e.target.value)}
+                      onFocus={() => setShowRecentPurchases(false)}
                       disabled={!acertoRef}
                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), qtyInput.current?.focus())}
                       className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-300 p-2 rounded-lg outline-none text-base font-bold text-[#ccff00] placeholder:text-white/20 disabled:opacity-20 disabled:cursor-not-allowed shadow-sm"
@@ -2559,6 +2849,7 @@ export default function App() {
                       type="number"
                       value={acertoQuantity}
                       onChange={(e) => setAcertoQuantity(e.target.value)}
+                      onFocus={() => setShowRecentPurchases(false)}
                       disabled={!acertoRef}
                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAcertoSubmit(e))}
                       className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-300 p-2 rounded-lg outline-none text-base font-bold placeholder:text-white/20 disabled:opacity-20 disabled:cursor-not-allowed shadow-sm"
@@ -2586,7 +2877,7 @@ export default function App() {
                       <div className="flex items-center gap-2">
                         <History className="w-4 h-4 text-white/40" />
                         <span className="text-[11px] font-black text-white/60 uppercase tracking-widest">
-                          Desfazer Lançamentos Recentes ({purchases.length})
+                          <span>ÚLTIMOS LANÇAMENTOS ({purchases.length})</span>
                         </span>
                       </div>
                       {showRecentPurchases ? (
@@ -2602,37 +2893,49 @@ export default function App() {
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
                           exit={{ opacity: 0, height: 0 }}
-                          className="space-y-1.5 overflow-hidden mt-2"
+                          className="space-y-1.5 mt-2 max-h-[340px] overflow-y-auto pr-2 custom-scrollbar"
                         >
-                          {purchases.slice(0, 2).map((p) => {
+                          {purchases.map((p) => {
                             const cust = customersMap.get(String(p.customerId));
+                            const cleanUsername = cust?.username 
+                              ? cust.username.replace(/^@/, '').replace(/^"/, '').split(',')[0].trim() 
+                              : 'N/A';
                             return (
                               <div 
                                 key={`recent-${p.id}`} 
-                                className="bg-black/30 rounded-md p-2.5 flex items-center justify-between border border-white/5 group hover:border-white/10 transition-colors"
+                                className="bg-black/30 rounded-md p-3.5 flex items-center justify-between border border-white/5 group hover:border-white/10 transition-colors"
                               >
                                 <div className="flex items-center gap-2 sm:gap-3">
-                                  <div className="bg-[#ccff00]/10 text-[#ccff00] px-1.5 py-0.5 rounded textxs font-black min-w-[28px] text-center">
-                                    {p.quantity}x
+                                  <div className="bg-[#ccff00]/10 text-[#ccff00] px-2.5 py-1 rounded-md text-[17px] font-black min-w-[36px] text-center">
+                                    <span>{p.quantity}x</span>
                                   </div>
                                   <div className="flex flex-col">
-                                    <span className="text-white font-bold text-[11px] uppercase tracking-tight">{p.reference}</span>
-                                    <span className="text-white/40 text-[9px] uppercase tracking-widest">{cust?.nome_completo || 'Desconhecido'}</span>
+                                    <span className="text-white font-bold text-[16.5px] uppercase tracking-tight"><span>{p.reference}</span></span>
+                                    <span className="text-white/40 text-[14px] uppercase tracking-wider font-mono flex flex-wrap items-center gap-1.5 mt-1">
+                                      <span className="text-[#ccff00] font-black">CÓD {cust?.codigo_cliente || ''}</span>
+                                      <span className="text-white/20">•</span>
+                                      <span className="text-[#00ffff] font-extrabold">{cleanUsername}</span>
+                                      {cust?.nome_completo && cust.nome_completo !== 'Novo Cliente' && (
+                                        <>
+                                          <span className="text-white/20">•</span>
+                                          <span className="text-[#5fb3f9] font-bold">{cust.nome_completo}</span>
+                                        </>
+                                      )}
+                                    </span>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                  <span className="text-[#ccff00] font-black text-[10px]">R$ {p.value.toFixed(2)}</span>
+                                  <span className="text-[#ccff00] font-black text-[15px]"><span>R$ {(p.value * p.quantity).toFixed(2)}</span></span>
                                   <button
                                     type="button"
                                     onClick={(e) => {
                                       e.preventDefault();
-                                      setPurchases(prev => prev.filter(x => String(x.id) !== String(p.id)));
-                                      if (purchases.length === 1) setShowRecentPurchases(false);
+                                      setDeletePurchaseModal({ visible: true, purchase: p });
                                     }}
-                                    className="text-red-500 hover:text-white bg-red-500/10 hover:bg-red-500 px-2 py-1.5 rounded-md transition-all flex items-center gap-1.5"
+                                    className="text-red-500 hover:text-white bg-red-500/10 hover:bg-red-500 px-2.5 py-1.5 rounded-md transition-all flex items-center gap-1.5"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
-                                    <span className="text-[10px] font-black uppercase tracking-wider hidden sm:inline">Excluir</span>
+                                    <span className="text-[13px] font-black uppercase tracking-wider hidden sm:inline"><span>Excluir</span></span>
                                   </button>
                                 </div>
                               </div>
@@ -2670,25 +2973,13 @@ export default function App() {
                     </div>
                     {(purchases.length > 0 || liveConfig.isActive) && (
                       <div className="flex items-center gap-2 relative">
-                        {purchases.length > 0 && (
-                          <button
-                            onClick={() => handleFinalizarAcerto('salvar')}
-                            disabled={isSavingSale || isAutoSaving}
-                            className="bg-white/5 border border-white/10 text-white/60 px-3 py-1.5 rounded-md font-bold text-[10px] uppercase hover:bg-white/10 transition-all disabled:opacity-50 flex items-center gap-2"
-                            title="Sincronizar dados com o servidor agora"
-                          >
-                            {isSavingSale ? 'SINCRONIZANDO...' : 'SINCRONIZAR'}
-                            <Database className="w-3 h-3" />
-                          </button>
-                        )}
-                        
                         <div className="relative">
                           <button
                             onClick={() => setIsFinalizarModalOpen(!isFinalizarModalOpen)}
                             disabled={isSavingSale || isAutoSaving}
                             className="bg-[#ccff00] text-black px-4 py-1.5 rounded-md font-black text-xs uppercase hover:shadow-[0_0_15px_rgba(204,255,0,0.3)] transition-all disabled:opacity-50 flex items-center gap-2"
                           >
-                            {isSavingSale ? 'SALVANDO...' : 'OPÇÕES DE ACERTO'}
+                            <span>{isSavingSale ? 'SALVANDO...' : 'OPÇÕES DE ACERTO'}</span>
                             {!isSavingSale && <Save className="w-3 h-3" />}
                           </button>
 
@@ -2705,25 +2996,6 @@ export default function App() {
                                 exit={{ opacity: 0, scale: 0.9, y: -10 }}
                                 className="absolute right-0 top-full mt-2 w-64 bg-[#111] border border-[#ccff00]/30 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col"
                               >
-                                <button
-                                  onClick={() => {
-                                    setIsFinalizarModalOpen(false);
-                                    setConfirmAction({
-                                      type: 'salvar',
-                                      title: 'Salvar Progresso',
-                                      message: 'Deseja salvar o progresso atual? Isso gravará as informações no histórico, mas você continuará na mesma tela.'
-                                    });
-                                  }}
-                                  className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/5 transition-colors group"
-                                >
-                                  <div className="font-black text-white group-hover:text-[#ccff00] text-sm uppercase tracking-wide mb-0.5">
-                                    Salvar Progresso
-                                  </div>
-                                  <div className="text-[10px] text-white/50 leading-tight">
-                                    Grava no histórico e mantém a tela atual.
-                                  </div>
-                                </button>
-
                                 <button
                                   onClick={() => {
                                     setIsFinalizarModalOpen(false);
@@ -3029,13 +3301,15 @@ export default function App() {
                               ) : (
                                 <XCircle className="w-2.5 h-2.5" />
                               )}
-                              {group.items.length === 0 
-                                ? 'VAZIA' 
-                                : group.paid 
-                                  ? (confirmingUnpayId === String(group.customerId) ? 'DESFAZER?' : 'PAGO') 
-                                  : processingIds.includes(String(group.customerId)) 
-                                    ? 'PROCESSANDO' 
-                                    : 'PENDENTE'}
+                              <span>
+                                {group.items.length === 0 
+                                  ? 'VAZIA' 
+                                  : group.paid 
+                                    ? (confirmingUnpayId === String(group.customerId) ? 'DESFAZER?' : 'PAGO') 
+                                    : processingIds.includes(String(group.customerId)) 
+                                      ? 'PROCESSANDO' 
+                                      : 'PENDENTE'}
+                              </span>
                             </button>
                           </td>
                           <td className="px-2 py-0.5 text-right">
@@ -3109,16 +3383,21 @@ export default function App() {
                   ))}
                 </div>
 
-                <div className="flex justify-between items-center mt-2 px-1">
+                <div className="flex flex-wrap justify-between items-center gap-2 mt-2 px-1">
                   <div className="text-[9px] font-black text-[#ccff00]/60 uppercase tracking-[0.2em]">
-                    {filteredGroups.length} SACOLAS {bagFilterTab !== 'todas' ? `(${bagFilterTab.replace('_', ' ').toUpperCase()})` : ''}
+                    <span>{filteredBagGroups.length} SACOLAS</span> <span>{bagFilterTab !== 'todas' ? `(${bagFilterTab.replace('_', ' ').toUpperCase()})` : ''}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[8px] sm:text-[9px] font-black uppercase tracking-wider">
+                    <span className="text-white/40">Total: <span className="text-[#ccff00]">R$ {groupedPurchases.totalValue.toFixed(2)}</span></span>
+                    <span className="text-white/40">Pago: <span className="text-green-400">R$ {groupedPurchases.totalPaidValue.toFixed(2)}</span></span>
+                    <span className="text-white/40">Falta: <span className="text-red-400">R$ {(groupedPurchases.totalValue - groupedPurchases.totalPaidValue).toFixed(2)}</span></span>
                   </div>
                 </div>
               </div>
 
               {/* Cards de Sacolas */}
               <div className="grid grid-cols-1 gap-2.5 mt-2">
-                {filteredGroups.filter(g => g.items.length > 0).map((group) => {
+                {filteredBagGroups.filter(g => g.items.length > 0).map((group) => {
                   const itemsCount = group.items.reduce((sum, i) => sum + Number(i.quantity), 0);
                   const statusColor = group.paid 
                     ? group.delivered ? "border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.15)]" : "border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]"
@@ -3160,7 +3439,7 @@ export default function App() {
                             <span className="text-[10px] text-white/20 mr-1 font-mono uppercase">R$</span>
                             {group.total.toFixed(2)}
                           </div>
-                          <div className="text-[9px] font-mono text-white/30 uppercase mt-0.5">
+                          <div className="text-[11px] font-black text-white/60 uppercase mt-0.5">
                             {itemsCount} ITENS
                           </div>
                         </div>
@@ -3240,12 +3519,12 @@ export default function App() {
                           {group.delivered ? (
                             <>
                               <PackageCheck className="w-4 h-4" />
-                              ENTREGUE
+                              <span>ENTREGUE</span>
                             </>
                           ) : (
                             <>
                               <Truck className="w-4 h-4" />
-                              {group.paid ? "ENTREGAR" : "ENTREGA BLOQ."}
+                              <span>{group.paid ? "ENTREGAR" : "ENTREGA BLOQ."}</span>
                             </>
                           )}
                         </button>
@@ -3254,7 +3533,7 @@ export default function App() {
                   );
                 })}
 
-                {filteredGroups.filter(g => g.items.length > 0).length === 0 && (
+                {filteredBagGroups.filter(g => g.items.length > 0).length === 0 && (
                   <div className="text-center py-20 bg-[#111] rounded-3xl border border-white/5">
                     <Package className="w-12 h-12 text-white/10 mx-auto mb-4" />
                     <p className="text-white/30 font-mono text-sm uppercase tracking-widest">Nenhuma sacola encontrada</p>
@@ -3429,7 +3708,7 @@ export default function App() {
                                   : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 hover:bg-emerald-500 hover:text-white"
                               )}
                             >
-                              {cliente.bloqueada ? 'Desbloquear' : 'Bloquear'}
+                              <span>{cliente.bloqueada ? 'Desbloquear' : 'Bloquear'}</span>
                             </button>
                           </td>
                         </tr>
@@ -3647,70 +3926,121 @@ export default function App() {
             className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-md flex items-center justify-center p-4"
           >
             <motion.div
-              initial={{ scale: 0.8, y: 50 }}
+              initial={{ scale: 0.8, y: 30 }}
               animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.8, y: 50 }}
-              className="w-full max-w-2xl bg-[#111] border border-[#ccff00]/30 p-8 rounded-2xl text-center space-y-6 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden"
+              exit={{ scale: 0.8, y: 30 }}
+              className="w-full max-w-lg bg-[#111] border border-[#ccff00]/30 p-5 rounded-2xl text-center space-y-4 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden"
             >
               <div className="absolute top-0 left-0 w-full h-1 bg-[#ccff00]/50" />
-              
-              <div className="space-y-1">
-                <span className={cn(
-                  "font-mono text-xs tracking-[0.5em] uppercase",
-                  selectedCustomer.bloqueada ? "text-red-500/60" : "text-[#ccff00]/40"
-                )}>
-                  {selectedCustomer.bloqueada ? 'CLIENTE BLOQUEADA' : 'Customer Identified'}
-                </span>
-                  <motion.h1 
+
+              <div className="flex flex-col items-center justify-center space-y-0">
+                <motion.h1 
                   initial={{ opacity: 0, scale: 0.5 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.2, type: 'spring' }}
+                  transition={{ delay: 0.1, type: 'spring' }}
                   className={cn(
-                    "font-black leading-none drop-shadow-[0_0_30px_rgba(204,255,0,0.3)]",
+                    "font-black leading-none drop-shadow-[0_0_20px_rgba(204,255,0,0.25)] -mt-2 md:-mt-3",
                     selectedCustomer.bloqueada 
-                      ? "text-[60px] md:text-[100px] text-red-500 drop-shadow-[0_0_30px_rgba(239,68,68,0.3)] uppercase tracking-tighter" 
-                      : "text-[80px] md:text-[150px] text-[#ccff00]"
+                      ? "text-[50px] md:text-[80px] text-red-500 drop-shadow-[0_0_20px_rgba(239,68,68,0.25)] uppercase tracking-tighter" 
+                      : "text-[60px] md:text-[110px] text-[#ccff00]"
                   )}
                 >
                   {selectedCustomer.bloqueada ? 'Bloqueada' : (selectedCustomer.codigo_cliente || '')}
                 </motion.h1>
+
+                <div className="space-y-0.5 -mt-3 md:-mt-5">
+                  <div className="text-xl md:text-3xl font-black text-white leading-tight">{selectedCustomer.username}</div>
+                  {selectedCustomer.nome_completo === 'Novo Cliente' ? (
+                    <div className="space-y-1 max-w-sm mx-auto mt-1 mb-1">
+                      <input
+                        type="text"
+                        placeholder="Digite o nome completo..."
+                        value={editingName}
+                        onChange={(e) => setEditingName(capitalizeWords(e.target.value))}
+                        onFocus={(e) => {
+                          const defaultName = selectedCustomer.username.replace(/^@/, '').replace(/^"/, '').split(',')[0].trim();
+                          if (e.target.value === defaultName) {
+                            setEditingName('');
+                          }
+                        }}
+                        onBlur={(e) => {
+                           if (e.target.value.trim() === '') {
+                               const defaultName = selectedCustomer.username.replace(/^@/, '').replace(/^"/, '').split(',')[0].trim();
+                               setEditingName(defaultName);
+                           }
+                        }}
+                        className="w-full px-3 py-1.5 bg-black/50 border border-[#ccff00]/30 rounded-xl text-white placeholder-white/20 focus:border-[#ccff00] focus:ring-1 focus:ring-[#ccff00] outline-none text-center text-sm font-bold"
+                        autoFocus
+                      />
+                      <div className="text-[9px] font-black text-[#ccff00]/40 uppercase tracking-[0.2em] mt-0.5">NOME COMPLETO</div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-white/40 uppercase tracking-widest font-mono">
+                      {selectedCustomer.nome_completo}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="text-2xl md:text-4xl font-black text-white">{selectedCustomer.username}</div>
-                {selectedCustomer.nome_completo === 'Novo Cliente' ? (
-                  <div className="space-y-2 max-w-sm mx-auto">
-                    <input
-                      type="text"
-                      placeholder="Digite o nome completo..."
-                      value={editingName}
-                      onChange={(e) => setEditingName(capitalizeWords(e.target.value))}
-                      className="w-full px-4 py-3 bg-black/50 border border-[#ccff00]/30 rounded-xl text-white placeholder-white/20 focus:border-[#ccff00] focus:ring-1 focus:ring-[#ccff00] outline-none text-center text-lg font-bold"
-                      autoFocus
-                    />
-                    <div className="text-[10px] font-black text-[#ccff00]/40 uppercase tracking-[0.3em]">NOME COMPLETO</div>
+              {!selectedCustomer.bloqueada && (
+                <div className="flex flex-col items-center gap-1.5 py-3 bg-white/5 border border-white/5 rounded-xl px-4 max-w-xs mx-auto">
+                  <div className="text-[13px] font-black text-[#ccff00]/60 uppercase tracking-[0.15em] font-mono">
+                    Quantidade de peças
                   </div>
-                ) : (
-                  <div className="text-sm md:text-base text-white/40 uppercase tracking-widest font-mono">
-                    {selectedCustomer.nome_completo}
+                  <div className="flex items-center gap-4 w-full justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmQty(prev => Math.max(1, prev - 1))}
+                      className="w-9 h-9 bg-white/5 hover:bg-white/10 active:bg-white/20 rounded-lg text-white font-black text-lg flex items-center justify-center transition-all select-none border border-white/10"
+                    >
+                      -
+                    </button>
+                    <span className="text-[#ccff00] text-2xl font-black text-center min-w-[50px] font-mono">
+                      {confirmQty}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmQty(prev => prev + 1)}
+                      className="w-9 h-9 bg-white/5 hover:bg-white/10 active:bg-white/20 rounded-lg text-white font-black text-lg flex items-center justify-center transition-all select-none border border-white/10"
+                    >
+                      +
+                    </button>
                   </div>
-                )}
-              </div>
+                  {/* Quick selection chips */}
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {[1, 2, 3, 5, 10].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setConfirmQty(num)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-sm font-black transition-all border",
+                          confirmQty === num 
+                            ? "bg-[#ccff00]/10 border-[#ccff00] text-[#ccff00]" 
+                            : "bg-transparent border-white/5 text-white/50 hover:border-white/10 hover:text-white"
+                        )}
+                      >
+                        {num}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-              <div className="flex flex-col md:flex-row items-center justify-center gap-4 pt-4">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
                 {!selectedCustomer.bloqueada && (
                   <button
                     onClick={confirmPurchase}
-                    className="w-full md:w-auto px-8 py-3 bg-[#ccff00] text-black font-black text-lg rounded-lg hover:shadow-[0_0_30px_rgba(204,255,0,0.5)] transition-all flex items-center justify-center gap-2"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-[#ccff00] text-black font-black text-sm rounded-lg hover:shadow-[0_0_20px_rgba(204,255,0,0.4)] transition-all flex items-center justify-center gap-2 uppercase tracking-wider"
                   >
-                    CONFIRMAR COMPRA <CheckCircle2 className="w-6 h-6" />
+                    CONFIRMAR COMPRA <CheckCircle2 className="w-5 h-5" />
                   </button>
                 )}
                 <button
                   onClick={() => setSelectedCustomer(null)}
-                  className="w-full md:w-auto px-8 py-3 bg-white/5 text-white/40 font-black text-lg rounded-lg hover:bg-white/10 hover:text-white transition-all border border-white/10"
+                  className="w-full sm:w-auto px-6 py-2.5 bg-white/5 text-white/40 font-black text-sm rounded-lg hover:bg-white/10 hover:text-white transition-all border border-white/10 uppercase tracking-wider"
                 >
-                  {selectedCustomer.bloqueada ? 'FECHAR E CONTINUAR' : 'CANCELAR'}
+                  <span>{selectedCustomer.bloqueada ? 'FECHAR E CONTINUAR' : 'CANCELAR'}</span>
                 </button>
               </div>
             </motion.div>
@@ -3975,7 +4305,7 @@ export default function App() {
                               <div className="flex items-center gap-2">
                                 <Calendar className="w-4 h-4 text-[#ccff00]/60" />
                                 <span className="text-sm font-bold text-white">
-                                  {new Date(live.data_live).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                                  {safeFormatDate(live.data_live)}
                                 </span>
                               </div>
                             </td>
@@ -4223,14 +4553,14 @@ export default function App() {
               <div className="flex items-center gap-3 text-red-500 mb-4">
                 <AlertTriangle className="w-6 h-6" />
                 <h3 className="font-black text-lg tracking-tight uppercase">
-                  {blockModal.customer.bloqueada ? 'Desbloquear Cliente?' : 'Bloquear Cliente?'}
+                  <span>{blockModal.customer.bloqueada ? 'Desbloquear Cliente?' : 'Bloquear Cliente?'}</span>
                 </h3>
               </div>
               <p className="text-white/60 text-sm mb-6 text-center">
-                {blockModal.customer.bloqueada 
+                <span>{blockModal.customer.bloqueada 
                   ? `Deseja realmente DESBLOQUEAR a cliente ${blockModal.customer.nome_completo || blockModal.customer.username}?`
                   : `Deseja realmente BLOQUEAR a cliente ${blockModal.customer.nome_completo || blockModal.customer.username}? Ela não poderá fazer novas compras na live.`
-                }
+                }</span>
               </p>
               <div className="flex justify-end gap-3">
                 <button
@@ -4246,13 +4576,89 @@ export default function App() {
                     blockModal.customer.bloqueada ? "bg-emerald-500 hover:bg-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.3)]" : "bg-red-500 hover:bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.3)]"
                   )}
                 >
-                  {blockModal.customer.bloqueada ? 'SIM, DESBLOQUEAR' : 'SIM, BLOQUEAR'}
+                  <span>{blockModal.customer.bloqueada ? 'SIM, DESBLOQUEAR' : 'SIM, BLOQUEAR'}</span>
                 </button>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Delete Single Purchase Confirmation Modal (Guardrail) */}
+      <AnimatePresence>
+        {deletePurchaseModal?.visible && deletePurchaseModal.purchase && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[125] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#111] border border-red-500/30 rounded-xl p-6 max-w-md w-full shadow-2xl"
+            >
+              <div className="flex items-center gap-3 text-red-500 mb-4">
+                <AlertTriangle className="w-6 h-6" />
+                <h3 className="text-lg font-black uppercase tracking-widest">Excluir Lançamento?</h3>
+              </div>
+              <p className="text-white/70 text-sm mb-6 leading-relaxed">
+                Tem certeza que deseja excluir o lançamento de <strong className="text-[#ccff00]">{deletePurchaseModal.purchase.quantity}x {deletePurchaseModal.purchase.reference}</strong>? 
+                {customersMap.get(String(deletePurchaseModal.purchase.customerId)) && (
+                  <span>
+                    {" "}Este item pertence à cliente <strong className="text-[#00ffff]">{customersMap.get(String(deletePurchaseModal.purchase.customerId))?.username?.replace(/^@/, '') || customersMap.get(String(deletePurchaseModal.purchase.customerId))?.nome_completo}</strong>.
+                  </span>
+                )}
+                {" "}<span className="text-red-400 font-bold">Esta ação não pode ser desfeita.</span>
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setDeletePurchaseModal({ visible: false, purchase: null })}
+                  className="px-4 py-2 rounded-md text-white/60 hover:text-white hover:bg-white/5 transition-colors text-sm font-bold"
+                >
+                  CANCELAR
+                </button>
+                <button
+                  onClick={async () => {
+                    const p = deletePurchaseModal.purchase;
+                    if (!p) return;
+                    
+                    if (supabase) {
+                      try {
+                        const { error } = await supabase
+                          .from('live_vendas_itens')
+                          .delete()
+                          .eq('id', p.id);
+                        if (error) {
+                          console.error('Error deleting from supabase:', error);
+                          showToast('⚠️ Erro ao excluir do banco de dados!');
+                          setDeletePurchaseModal({ visible: false, purchase: null });
+                          return;
+                        }
+                      } catch (err) {
+                        console.error('Catch error deleting from supabase:', err);
+                        showToast('⚠️ Erro ao excluir do banco de dados!');
+                        setDeletePurchaseModal({ visible: false, purchase: null });
+                        return;
+                      }
+                    }
+                    setPurchases(prev => prev.filter(x => String(x.id) !== String(p.id)));
+                    if (purchases.length === 1) setShowRecentPurchases(false);
+                    showToast(`🗑️ Lançamento de ${p.quantity}x ${p.reference} excluído!`);
+                    setDeletePurchaseModal({ visible: false, purchase: null });
+                  }}
+                  autoFocus
+                  className="px-4 py-2 rounded-md bg-red-500 text-white font-black text-sm hover:bg-red-600 transition-colors shadow-[0_0_15px_rgba(239,68,68,0.3)]"
+                >
+                  SIM, EXCLUIR
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Custom Confirmation Modal */}
       <AnimatePresence>
         {confirmAction && (
@@ -4439,7 +4845,7 @@ export default function App() {
                     </h4>
                     <ul className="list-disc pl-5 text-xs text-yellow-500/80 space-y-1">
                       {productImportModal.warnings.map((warn, i) => (
-                        <li key={i}>{warn}</li>
+                        <li key={i}><span>{warn}</span></li>
                       ))}
                     </ul>
                   </div>
