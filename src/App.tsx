@@ -3384,13 +3384,13 @@ export default function App() {
                 </div>
 
                 <div className="flex flex-wrap justify-between items-center gap-2 mt-2 px-1">
-                  <div className="text-[9px] font-black text-[#ccff00]/60 uppercase tracking-[0.2em]">
+                  <div className="text-[12px] sm:text-xs font-black text-[#ccff00]/70 uppercase tracking-[0.15em]">
                     <span>{filteredBagGroups.length} SACOLAS</span> <span>{bagFilterTab !== 'todas' ? `(${bagFilterTab.replace('_', ' ').toUpperCase()})` : ''}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-[8px] sm:text-[9px] font-black uppercase tracking-wider">
-                    <span className="text-white/40">Total: <span className="text-[#ccff00]">R$ {groupedPurchases.totalValue.toFixed(2)}</span></span>
-                    <span className="text-white/40">Pago: <span className="text-green-400">R$ {groupedPurchases.totalPaidValue.toFixed(2)}</span></span>
-                    <span className="text-white/40">Falta: <span className="text-red-400">R$ {(groupedPurchases.totalValue - groupedPurchases.totalPaidValue).toFixed(2)}</span></span>
+                  <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 text-[11px] sm:text-[12px] font-black uppercase tracking-wider">
+                    <span className="text-white/50">Total: <span className="text-[#ccff00] text-sm sm:text-base font-black">R$ {groupedPurchases.totalValue.toFixed(2)}</span></span>
+                    <span className="text-white/50">Pago: <span className="text-green-400 text-sm sm:text-base font-black">R$ {groupedPurchases.totalPaidValue.toFixed(2)}</span></span>
+                    <span className="text-white/50">Falta: <span className="text-red-400 text-sm sm:text-base font-black">R$ {(groupedPurchases.totalValue - groupedPurchases.totalPaidValue).toFixed(2)}</span></span>
                   </div>
                 </div>
               </div>
