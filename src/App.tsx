@@ -3385,7 +3385,7 @@ export default function App() {
 
                 <div className="flex justify-between items-center gap-2 mt-2 px-1 w-full">
                   <div className="text-[11px] min-[375px]:text-[12px] sm:text-xs font-black text-[#ccff00]/70 uppercase tracking-[0.1em] sm:tracking-[0.15em] shrink-0">
-                    <span>{filteredBagGroups.length} SACOLAS</span> <span>{bagFilterTab !== 'todas' ? `(${bagFilterTab.replace('_', ' ').toUpperCase()})` : ''}</span>
+                    <span>{filteredBagGroups.length} SACOLAS</span>
                   </div>
                   <div className="flex items-center gap-1.5 min-[375px]:gap-2 sm:gap-3 text-[10px] min-[375px]:text-[11px] sm:text-[12px] font-black uppercase tracking-wider shrink-0">
                     <span className="text-white/50">Total: <span className="text-[#ccff00] text-xs min-[375px]:text-sm sm:text-base font-black">R$ {groupedPurchases.totalValue.toFixed(2)}</span></span>
