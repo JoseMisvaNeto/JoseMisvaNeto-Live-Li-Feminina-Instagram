@@ -3387,10 +3387,10 @@ export default function App() {
                   <div className="text-[11px] min-[375px]:text-[12px] sm:text-xs font-black text-[#ccff00]/70 uppercase tracking-[0.1em] sm:tracking-[0.15em] shrink-0">
                     <span>{filteredBagGroups.length} SACOLAS</span>
                   </div>
-                  <div className="flex items-center gap-1.5 min-[375px]:gap-2 sm:gap-3 text-[10px] min-[375px]:text-[11px] sm:text-[12px] font-black uppercase tracking-wider shrink-0">
-                    <span className="text-white/50">Total: <span className="text-[#ccff00] text-xs min-[375px]:text-sm sm:text-base font-black">R$ {groupedPurchases.totalValue.toFixed(2)}</span></span>
-                    <span className="text-white/50">Pago: <span className="text-green-400 text-xs min-[375px]:text-sm sm:text-base font-black">R$ {groupedPurchases.totalPaidValue.toFixed(2)}</span></span>
-                    <span className="text-white/50">Falta: <span className="text-red-400 text-xs min-[375px]:text-sm sm:text-base font-black">R$ {(groupedPurchases.totalValue - groupedPurchases.totalPaidValue).toFixed(2)}</span></span>
+                  <div className="flex items-center gap-1 min-[375px]:gap-1.5 sm:gap-2.5 text-[8.5px] min-[375px]:text-[9.5px] sm:text-[11px] font-black uppercase tracking-wider shrink-0">
+                    <span className="text-white/50">Total: <span className="text-[#ccff00] text-[10px] min-[375px]:text-[11px] sm:text-sm font-black">R$ {groupedPurchases.totalValue.toFixed(2)}</span></span>
+                    <span className="text-white/50">Pago: <span className="text-green-400 text-[10px] min-[375px]:text-[11px] sm:text-sm font-black">R$ {groupedPurchases.totalPaidValue.toFixed(2)}</span></span>
+                    <span className="text-white/50">Falta: <span className="text-red-400 text-[10px] min-[375px]:text-[11px] sm:text-sm font-black">R$ {(groupedPurchases.totalValue - groupedPurchases.totalPaidValue).toFixed(2)}</span></span>
                   </div>
                 </div>
               </div>
