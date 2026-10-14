@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { api, isDbId } from './lib/api';
 import { 
   Search, 
   ShoppingBag, 
@@ -54,13 +54,6 @@ import { processCSVFiles, downloadCSV, processProductsCSV, downloadProductsCSV, 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
-
-// Supabase Client Initialization
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = (supabaseUrl && supabaseAnonKey) 
-  ? createClient(supabaseUrl, supabaseAnonKey) 
-  : null;
 
 // --- Types & Mock Data ---
 interface Customer {
@@ -489,18 +482,12 @@ export default function App() {
   // Attempt to auto-sync the active live from the database when first loading or missing local state
   useEffect(() => {
     const fetchActiveLiveDate = async () => {
-      if (!supabase || liveConfig.isActive) return;
+      if (liveConfig.isActive) return;
 
       try {
-        const { data, error } = await supabase
-          .from('live_vendas')
-          .select('data_live')
-          .eq('status', 'pendente')
-          .order('data_live', { ascending: false })
-          .limit(1);
+        const { data_live: latestLiveDate } = await api.getLiveAtiva();
 
-        if (!error && data && data.length > 0) {
-          const latestLiveDate = data[0].data_live;
+        if (latestLiveDate) {
           console.log('Automagically connecting to active live:', latestLiveDate);
           setLiveConfig({
             isActive: true,
@@ -513,7 +500,7 @@ export default function App() {
     };
 
     fetchActiveLiveDate();
-  }, [supabase, liveConfig.isActive]);
+  }, [liveConfig.isActive]);
 
   const [manualPaidIds, setManualPaidIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('manualPaidIds');
@@ -539,22 +526,13 @@ export default function App() {
 
   // Recovery/Sync logic
   const recoverData = useCallback(async (forced = false) => {
-    if (!supabase || !liveConfig.isActive) return;
+    if (!liveConfig.isActive) return;
     
     // If not forced, optionally avoid overwriting. But we want robust sync, so default is forced = true.
     try {
-      console.log('Fetching synced data from Supabase...');
-      const { data: vendas, error: vError } = await supabase
-        .from('live_vendas')
-        .select(`
-          *,
-          live_vendas_itens (*),
-          live_clientes (id, username, nome_completo, codigo_cliente)
-        `)
-        .eq('data_live', dataLive);
+      console.log('Fetching synced data from API...');
+      const vendas = await api.getVendasCompletas(dataLive);
       
-      if (vError) throw vError;
-
       if (vendas) {
         const recoveredPurchases: Purchase[] = [];
         const recoveredShoppingList: Customer[] = [];
@@ -634,47 +612,34 @@ export default function App() {
     } catch (err) {
       console.error('Error recovering data:', err);
     }
-  }, [liveConfig.isActive, dataLive, supabase]);
+  }, [liveConfig.isActive, dataLive]);
 
   // Initial Sync on Load
   useEffect(() => {
     recoverData(true);
   }, [recoverData]);
 
-  // Realtime Sync for Vendas (Pago/Entregue) and Itens (Sales additions/removals)
+  // Polling Sync for Vendas (Pago/Entregue) and Itens (Sales additions/removals)
   useEffect(() => {
-    if (!supabase || !liveConfig.isActive) return;
+    if (!liveConfig.isActive) return;
 
-    console.log('[Realtime] Creating channel live_vendas_sync for', dataLive);
+    console.log('[Polling] Iniciado para live', dataLive, '(a cada 15s)');
 
-    const channel = supabase.channel('live_vendas_sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'live_vendas' },
-        (payload) => {
-          // If a row was updated, check if it's the current live, then sync
-          if (payload.new && (payload.new as any).data_live === dataLive) {
-            recoverData(); 
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'live_vendas_itens' },
-        (_payload) => {
-          // An item was added, updated or deleted. Just resync everything for safety.
-          recoverData();
-        }
-      )
-      .subscribe((status, err) => {
-        if (err) console.error('Error subscribing to Supabase Realtime Sync:', err);
-      });
+    const poll = () => {
+      if (document.hidden) return;
+      recoverData();
+    };
+
+    const interval = setInterval(poll, 15000);
+    const onVisible = () => { if (!document.hidden) poll(); };
+    document.addEventListener('visibilitychange', onVisible);
 
     return () => {
-      console.log('[Realtime] Removing channel live_vendas_sync');
-      supabase.removeChannel(channel).catch(err => console.error('Realtime removeChannel error:', err));
+      console.log('[Polling] Parado para live', dataLive);
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [supabase, liveConfig.isActive, dataLive, recoverData]);
+  }, [liveConfig.isActive, dataLive, recoverData]);
 
   useEffect(() => {
     localStorage.setItem('manualPaidIds', JSON.stringify(manualPaidIds));
@@ -817,31 +782,18 @@ export default function App() {
     }
   }, [activeIndex]);
 
-  // Fetch customers from Supabase (with batching to bypass 1000 limit)
+  // Fetch customers from API (with batching)
   const fetchCustomers = useCallback(async () => {
-    if (!supabase) {
-      console.warn('Supabase client not initialized. Cannot fetch customers.');
-      return;
-    }
     setIsFetchingCustomers(true);
     try {
-      console.log('Fetching customers from Supabase table "live_clientes"...');
+      console.log('Fetching customers from API "live_clientes"...');
       let allData: Customer[] = [];
       let from = 0;
       const step = 1000;
       let hasMore = true;
 
       while (hasMore) {
-        const { data, error } = await supabase
-          .from('live_clientes')
-          .select('id, username, nome_completo, codigo_cliente, telefone, observacoes, bloqueada')
-          .order('username', { ascending: true })
-          .range(from, from + step - 1);
-        
-        if (error) {
-          console.error('Supabase error fetching customers:', error);
-          throw error;
-        }
+        const data = await api.getClientes(from, step);
         
         if (data && data.length > 0) {
           allData = [...allData, ...data];
@@ -861,7 +813,7 @@ export default function App() {
     } finally {
       setIsFetchingCustomers(false);
     }
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     fetchCustomers();
@@ -966,13 +918,10 @@ export default function App() {
         const nextCode = getNextAvailableCustomerCode();
         const updated = { ...customer, codigo_cliente: nextCode };
         
-        if (supabase) {
-          try {
-            const { error } = await supabase.from('live_clientes').update({ codigo_cliente: nextCode }).eq('id', customer.id);
-            if (error) console.error('Error updating customer code:', error);
-          } catch (err) {
-            console.error('Promise rejection updating customer code:', err);
-          }
+        try {
+          await api.updateCliente(Number(customer.id), { codigo_cliente: nextCode });
+        } catch (err) {
+          console.error('Error updating customer code:', err);
         }
         
         setCustomers(prev => prev.map(c => String(c.id) === String(customer.id) ? updated : c));
@@ -993,18 +942,15 @@ export default function App() {
         purchaseCount: 0
       };
 
-      if (supabase) {
-        try {
-          const { error } = await supabase.from('live_clientes').insert({
-            id: nextId,
-            codigo_cliente: nextCode,
-            username: newCustomer.username,
-            nome_completo: newCustomer.nome_completo
-          });
-          if (error) console.error('Error reserving new customer:', error);
-        } catch (err) {
-          console.error('Promise rejection reserving new customer:', err);
-        }
+      try {
+        await api.insertCliente({
+          id: nextId,
+          codigo_cliente: nextCode,
+          username: newCustomer.username,
+          nome_completo: newCustomer.nome_completo
+        });
+      } catch (err) {
+        console.error('Error reserving new customer:', err);
       }
       
       setCustomers(prev => [...prev, newCustomer].sort((a, b) => (a.username || '').localeCompare(b.username || '')));
@@ -1050,11 +996,6 @@ export default function App() {
 
   const confirmPurchase = useCallback(async () => {
     if (selectedCustomer && !isConfirmingPurchase) {
-      if (!supabase) {
-        showToast('⚠️ Erro crítico: Sem conexão com o banco de dados!');
-        return;
-      }
-      
       setIsConfirmingPurchase(true);
       
       try {
@@ -1067,29 +1008,21 @@ export default function App() {
         const qtdLive = exists ? (exists.purchaseCount || 0) + confirmQty : confirmQty;
 
         // 1. Garante de forma síncrona que o cliente existe
-        const { error: cError } = await supabase
-          .from('live_clientes')
-          .upsert({
-            id: Number(selectedCustomer.id),
-            username: selectedCustomer.username,
-            nome_completo: finalName,
-            codigo_cliente: customerCode
-          });
-        
-        if (cError) throw cError;
+        await api.upsertClienteId({
+          id: Number(selectedCustomer.id),
+          username: selectedCustomer.username,
+          nome_completo: finalName,
+          codigo_cliente: customerCode
+        });
 
         // 2. Garante de forma síncrona a venda
-        const { error: vError } = await supabase
-          .from('live_vendas')
-          .upsert({
-            cliente_id: Number(selectedCustomer.id),
-            data_live: liveConfig.date,
-            qtd_live: qtdLive,
-            pago: false,
-            status: 'pendente'
-          }, { onConflict: 'cliente_id,data_live' });
-
-        if (vError) throw vError;
+        await api.upsertVenda({
+          cliente_id: Number(selectedCustomer.id),
+          data_live: liveConfig.date,
+          qtd_live: qtdLive,
+          pago: false,
+          status: 'pendente'
+        });
 
         // ATUALIZAÇÃO LOCAL APÓS SUCESSO NO BANCO:
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1150,7 +1083,7 @@ export default function App() {
         setIsConfirmingPurchase(false);
       }
     }
-  }, [selectedCustomer, editingName, liveConfig, supabase, isConfirmingPurchase, confirmQty]);
+  }, [selectedCustomer, editingName, liveConfig, isConfirmingPurchase, confirmQty]);
 
   // Keyboard shortcuts for the identification modal
   useEffect(() => {
@@ -1186,23 +1119,17 @@ export default function App() {
     // Se já validou antes e confirmou, pula
     if (validatedRefs.has(currentRef)) return true;
 
-    if (supabase) {
-      try {
-        const { data } = await supabase
-          .from('produtos')
-          .select('id')
-          .eq('referencia', currentRef)
-          .maybeSingle();
+    try {
+      const { id } = await api.getProdutoByRef(currentRef);
 
-        if (!data) {
-          setPendingRefValidation({ ref: currentRef, action: actionCallback });
-          return false;
-        } else {
-          setValidatedRefs(prev => new Set(prev).add(currentRef));
-        }
-      } catch (err) {
-        console.error("Erro validando referência:", err);
+      if (!id) {
+        setPendingRefValidation({ ref: currentRef, action: actionCallback });
+        return false;
+      } else {
+        setValidatedRefs(prev => new Set(prev).add(currentRef));
       }
+    } catch (err) {
+      console.error("Erro validando referência:", err);
     }
     
     return true;
@@ -1216,47 +1143,35 @@ export default function App() {
     const activeCustomer = acertoActiveCustomer;
     if (!activeCustomer) return;
 
-    if (!supabase) {
-      showToast('⚠️ Erro crítico: Sem conexão com o banco de dados!');
-      return;
-    }
-
     const val = parseFloat(acertoValue);
     const qty = parseInt(acertoQuantity);
     setIsSubmittingAcerto(true);
 
     try {
       // 1. Garante que a venda (header) existe de forma síncrona
-      const { data: venda, error: vError } = await supabase
-        .from('live_vendas')
-        .upsert({
-          cliente_id: Number(activeCustomer.id),
-          data_live: liveConfig.date,
-          pago: false,
-          status: 'pendente'
-        }, { onConflict: 'cliente_id,data_live' })
-        .select('id')
-        .single();
+      const { id: vendaId } = await api.upsertVenda({
+        cliente_id: Number(activeCustomer.id),
+        data_live: liveConfig.date,
+        pago: false,
+        status: 'pendente'
+      });
 
-      if (vError) throw vError;
-      if (!venda) throw new Error('Falha ao registrar cabeçalho da venda');
+      if (!vendaId) throw new Error('Falha ao registrar cabeçalho da venda');
       
       // 2. Insere o item vinculado à venda
-      const { data: insertedItem, error: iError } = await supabase
-        .from('live_vendas_itens')
-        .insert({
-          venda_id: venda.id,
-          referencia: acertoRef.trim().toUpperCase(),
-          preco: val,
-          quantidade: qty
-        }).select('id').single();
+      const { id: itemId } = await api.insertItem({
+        venda_id: vendaId,
+        referencia: acertoRef.trim().toUpperCase(),
+        preco: val,
+        quantidade: qty
+      });
 
-      if (iError || !insertedItem) throw iError || new Error('Falha ao registrar o item');
+      if (!itemId) throw new Error('Falha ao registrar o item');
 
       // 3. Monta e adiciona o objeto no estado APÓS sucesso no banco
       const newPurchase: Purchase = {
-        id: String(insertedItem.id),
-        venda_id: String(venda.id),
+        id: String(itemId),
+        venda_id: String(vendaId),
         customerId: Number(activeCustomer.id),
         reference: acertoRef.trim().toUpperCase(),
         value: val,
@@ -1357,24 +1272,14 @@ export default function App() {
       const existing = purchasesRef.current.find(p => String(p.id) === String(id));
       if (!existing) return;
 
-      if (supabase) {
-        // Se a ID for local antiga (math.random), o Supabase pode dar erro de sintaxe,
-        // então englobamos num try/catch o banco, e caso dê erro, 
-        // prosseguimos com o delete local se for id sem formato válido de BD.
+      // Se a ID for local antiga (math.random), não existe no banco — só reflete o estado local
+      if (isDbId(id)) {
         if (existing.quantity > 1) {
           // Atualiza quantidade
-          const { error } = await supabase
-            .from('live_vendas_itens')
-            .update({ quantidade: existing.quantity - 1 })
-            .eq('id', id);
-          if (error && !error.message.includes('uuid') && !error.message.includes('integer')) throw error;
+          await api.updateItemQuantity(Number(id), existing.quantity - 1);
         } else {
           // Deleta item
-          const { error } = await supabase
-            .from('live_vendas_itens')
-            .delete()
-            .eq('id', id);
-          if (error && !error.message.includes('uuid') && !error.message.includes('integer')) throw error;
+          await api.deleteItem(Number(id));
         }
       }
 
@@ -1402,19 +1307,12 @@ export default function App() {
     setIsRemovingItem(true);
     
     try {
-      if (supabase) {
-        // Obter itens locais desse grupo para apagar do banco
-        const groupItems = purchasesRef.current.filter(p => Number(p.customerId) === customerId);
-        const itemIds = groupItems.map(p => p.id);
-        
-        if (itemIds.length > 0) {
-          const { error } = await supabase
-            .from('live_vendas_itens')
-            .delete()
-            .in('id', itemIds);
-          // Ignoramos erro de formatação se havia IDs locais velhos
-          if (error && !error.message.includes('uuid') && !error.message.includes('integer')) throw error;
-        }
+      // Obter itens locais desse grupo para apagar do banco (apenas IDs válidos de BD)
+      const groupItems = purchasesRef.current.filter(p => Number(p.customerId) === customerId);
+      const itemIds = groupItems.map(p => p.id).filter(isDbId);
+      
+      if (itemIds.length > 0) {
+        await api.deleteItems(itemIds.map(Number));
       }
 
       setPurchases(prev => prev.filter(p => Number(p.customerId) !== customerId));
@@ -1609,16 +1507,9 @@ export default function App() {
 
   // History Fetch
   const fetchHistory = async () => {
-    if (!supabase) return;
     setIsFetchingHistory(true);
     try {
-      const { data, error } = await supabase
-        .from('live_historico')
-        .select('*')
-        .order('data_live', { ascending: false })
-        .limit(15);
-
-      if (error) throw error;
+      const data = await api.getHistorico();
       setHistoryData(data || []);
     } catch (err) {
       console.error('Erro ao buscar histórico:', err);
@@ -1628,20 +1519,19 @@ export default function App() {
   };
 
   const handleSaveManualLive = async () => {
-    if (!supabase || !manualLiveDate || !manualLiveValue) return;
+    if (!manualLiveDate || !manualLiveValue) return;
     try {
       const dateObj = new Date(manualLiveDate + 'T12:00:00');
       const dias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
       const diaSemana = dias[dateObj.getDay()];
 
-      const { error } = await supabase.from('live_historico').insert({
+      await api.insertHistorico({
         data_live: manualLiveDate,
         dia_semana: diaSemana,
         qtd_sacolas: parseInt(manualLiveQtdSacolas || '0'),
         valor_total: parseFloat(manualLiveValue),
         observacoes: manualLiveObs
       });
-      if (error) throw error;
       setIsAddingManualLive(false);
       setManualLiveDate('');
       setManualLiveValue('');
@@ -1654,13 +1544,8 @@ export default function App() {
   };
 
   const handleSaveLiveObs = async (id: string) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('live_historico')
-        .update({ observacoes: editingLiveObs })
-        .eq('id', id);
-      if (error) throw error;
+      await api.updateHistorico(Number(id), { observacoes: editingLiveObs });
       setEditingLiveId(null);
       fetchHistory();
     } catch (err: any) {
@@ -1680,14 +1565,10 @@ export default function App() {
   };
 
   const handleClearAllData = async () => {
-    if (!supabase) return;
     setIsSavingSale(true);
     try {
-      // Delete all records from Supabase tables
-      // We use .not('id', 'is', null) to match all rows
-      await supabase.from('live_vendas_itens').delete().not('id', 'is', null);
-      await supabase.from('live_vendas').delete().not('id', 'is', null);
-      await supabase.from('live_historico').delete().not('id', 'is', null);
+      // Delete all records from work tables
+      await api.clearAll();
       
       // Clear all local state
       setPurchases([]);
@@ -1718,7 +1599,7 @@ export default function App() {
       localStorage.removeItem('liveConfig');
       // We keep 'messageTemplate' as it's a user configuration
       
-      showToast('Sistema limpo com sucesso! Para resetar os IDs para 1, rode no SQL Editor do Supabase: ALTER SEQUENCE live_clientes_id_seq RESTART WITH 1;');
+      showToast('Sistema limpo com sucesso!');
       
       // Re-fetch customers after clearing, as they are the master list
       fetchCustomers();
@@ -1731,7 +1612,7 @@ export default function App() {
   };
 
   const handleFinalizarAcerto = async (action: 'salvar' | 'finalizar', isAuto = false) => {
-    if (!supabase || (purchases.length === 0 && shoppingList.length === 0)) return;
+    if (purchases.length === 0 && shoppingList.length === 0) return;
 
     if (!isAuto) setIsSavingSale(true);
 
@@ -1753,13 +1634,7 @@ export default function App() {
         });
 
         // Remover do banco qualquer venda desta live que não esteja paga (ao finalizar)
-        const { error: deleteUnpaidError } = await supabase
-          .from('live_vendas')
-          .delete()
-          .eq('data_live', dataLive)
-          .eq('pago', false);
-        
-        if (deleteUnpaidError) throw deleteUnpaidError;
+        await api.deleteVendasPendentes(dataLive);
       }
 
       let skippedCount = 0;
@@ -1786,49 +1661,30 @@ export default function App() {
         const qtdLive = shoppingItem ? (shoppingItem.purchaseCount || 0) : 0;
 
         // Encontrar ou criar Venda
-        const { data: existingVendas, error: fetchVendaError } = await supabase
-          .from('live_vendas')
-          .select('id')
-          .eq('cliente_id', cid)
-          .eq('data_live', dataLive)
-          .limit(1);
-
-        if (fetchVendaError) throw fetchVendaError;
-
-        const existingVenda = existingVendas?.[0];
+        const { id: existingVendaId } = await api.findVendaId(cid, dataLive);
         let vendaId;
 
-        if (existingVenda) {
-          vendaId = existingVenda.id;
-          const { error: updateVendaError } = await supabase
-            .from('live_vendas')
-            .update({
-              pago: isPaid,
-              valor_ajuste: totalValue,
-              mensagem_enviada: sentMessages.includes(String(cid)),
-              status: action === 'finalizar' ? 'finalizado' : 'pendente',
-              qtd_live: qtdLive
-            })
-            .eq('id', vendaId);
-          
-          if (updateVendaError) throw updateVendaError;
+        if (existingVendaId) {
+          vendaId = existingVendaId;
+          await api.updateVenda(vendaId, {
+            pago: isPaid,
+            valor_ajuste: totalValue,
+            mensagem_enviada: sentMessages.includes(String(cid)),
+            status: action === 'finalizar' ? 'finalizado' : 'pendente',
+            qtd_live: qtdLive
+          });
           // Deletes e INSERTS em lote foram REMOVIDOS daqui para blindagem.
           // Agora dependemos de cada operação individual na live_vendas_itens.
         } else {
-          const { data: newVenda, error: vError } = await supabase
-            .from('live_vendas')
-            .insert({
-              cliente_id: cid,
-              data_live: dataLive,
-              pago: isPaid,
-              valor_ajuste: totalValue,
-              mensagem_enviada: sentMessages.includes(String(cid)),
-              status: action === 'finalizar' ? 'finalizado' : 'pendente',
-              qtd_live: qtdLive
-            })
-            .select()
-            .single();
-          if (vError) throw vError;
+          const newVenda = await api.insertVenda({
+            cliente_id: cid,
+            data_live: dataLive,
+            pago: isPaid,
+            valor_ajuste: totalValue,
+            mensagem_enviada: sentMessages.includes(String(cid)),
+            status: action === 'finalizar' ? 'finalizado' : 'pendente',
+            qtd_live: qtdLive
+          });
           vendaId = newVenda.id;
         }
 
@@ -1848,47 +1704,19 @@ export default function App() {
           const diaSemana = dias[dateObj.getDay()];
 
           // Buscar todas as vendas da data para calcular o total real
-          const { data: allVendas, error: fetchAllError } = await supabase
-            .from('live_vendas')
-            .select('valor_ajuste, pago')
-            .eq('data_live', dataLive);
-            
-          if (fetchAllError) throw fetchAllError;
+          const allVendas = await api.getVendasTotais(dataLive);
 
           const realTotalLive = allVendas?.filter(v => v.pago).reduce((acc, v) => acc + (Number(v.valor_ajuste) || 0), 0) || 0;
           const realQtdSacolas = allVendas?.filter(v => v.pago).length || 0;
 
-          const { data: existingLives, error: fetchHistError } = await supabase
-            .from('live_historico')
-            .select('id')
-            .eq('data_live', dataLive)
-            .limit(1);
-
-          if (fetchHistError) throw fetchHistError;
-
-          const existingLive = existingLives?.[0];
-
-          if (existingLive) {
-            const { error: updateHistError } = await supabase
-              .from('live_historico')
-              .update({ 
-                valor_total: realTotalLive,
-                qtd_sacolas: realQtdSacolas
-              })
-              .eq('id', existingLive.id);
-            if (updateHistError) throw updateHistError;
-          } else {
-            const { error: insertHistError } = await supabase
-              .from('live_historico')
-              .insert({
-                data_live: dataLive,
-                dia_semana: diaSemana,
-                qtd_sacolas: realQtdSacolas,
-                valor_total: realTotalLive,
-                observacoes: 'Fechamento automático'
-              });
-            if (insertHistError) throw insertHistError;
-          }
+          // Upsert no histórico por data_live (a API insere ou atualiza)
+          await api.saveHistorico({
+            data_live: dataLive,
+            dia_semana: diaSemana,
+            qtd_sacolas: realQtdSacolas,
+            valor_total: realTotalLive,
+            observacoes: 'Fechamento automático'
+          });
         } catch (histErr) {
           console.error('Erro ao atualizar histórico:', histErr);
           // Não interromper o processo principal por erro no histórico, mas avisar
@@ -1915,37 +1743,33 @@ export default function App() {
 
             for (const [ref, qty] of stockToDeduct.entries()) {
               // Buscar apenas o ID do produto
-              const { data: product } = await supabase
-                .from('produtos')
-                .select('id')
-                .eq('referencia', ref)
-                .single();
+              const { id: produtoId } = await api.getProdutoByRef(ref);
                 
-              if (product) {
+              if (produtoId) {
                 // APENAS INSERIR NA MOVIMENTAÇÃO
                 // A Trigger no banco de dados atualizará o saldo automaticamente
-                const { error: mError } = await supabase
-                  .from('movimentacoes_estoque')
-                  .insert({
-                    produto_id: product.id,
+                try {
+                  await api.insertMovimentacao({
+                    produto_id: produtoId,
                     tipo: 'SAÍDA',
                     quantidade: qty,
                     descricao: `VENDA LIVE - ${dataLive}`,
                     data: new Date().toISOString()
                   });
-
-                if (!mError) processedCount++;
+                  processedCount++;
+                } catch (mError) {
+                  console.error('Erro ao registrar movimentação:', mError);
+                }
               }
             }
             console.log(`${processedCount} movimentações registradas. O banco de dados atualizou os saldos via Trigger.`);
           }
 
           // 2. Limpar tabelas de trabalho no banco
-          const { data: currentVendas } = await supabase.from('live_vendas').select('id').eq('data_live', dataLive);
-          const vendaIds = currentVendas?.map(v => v.id) || [];
+          const vendaIds = await api.getVendasIds(dataLive);
           if (vendaIds.length > 0) {
-            await supabase.from('live_vendas_itens').delete().in('venda_id', vendaIds);
-            await supabase.from('live_vendas').delete().in('id', vendaIds);
+            await api.deleteItemsByVendas(vendaIds);
+            await api.deleteVendasByIds(vendaIds);
           }
 
           showToast('Acerto finalizado com sucesso! Estoque atualizado via Trigger.');
@@ -2049,20 +1873,12 @@ export default function App() {
     setManualPaidIds(prev => status ? [...prev, String(customerId)] : prev.filter(id => String(id) !== String(customerId)));
 
     // Persistência assíncrona
-    if (supabase) {
-      try {
-        const { error } = await supabase
-          .from('live_vendas')
-          .update({ pago: status })
-          .eq('cliente_id', customerId)
-          .eq('data_live', liveConfig.date);
-        
-        if (error) throw error;
-      } catch (err) {
-        console.error('Erro ao salvar pagamento:', err);
-        showToast('⚠️ Erro ao salvar PAGAMENTO no banco!');
-        // Se quisermos reverter, poderia ser feito aqui.
-      }
+    try {
+      await api.updateVendaByCliente(customerId, liveConfig.date, { pago: status });
+    } catch (err) {
+      console.error('Erro ao salvar pagamento:', err);
+      showToast('⚠️ Erro ao salvar PAGAMENTO no banco!');
+      // Se quisermos reverter, poderia ser feito aqui.
     }
   };
 
@@ -2076,30 +1892,15 @@ export default function App() {
     );
 
     // Persiste no banco de forma assíncrona
-    if (supabase) {
-      try {
-        const { error } = await supabase
-          .from('live_vendas')
-          .update({ entregue: isNowDelivered })
-          .eq('cliente_id', customerId)
-          .eq('data_live', liveConfig.date);
-        
-        if (error) {
-           // Fallback gracioso se a coluna "entregue" não existir
-           if (error.message && error.message.includes('entregue')) {
-               console.warn('Coluna "entregue" inexistente no banco. Use o editor SQL para cria-la (boolean, default false).');
-           } else {
-               throw error;
-           }
-        }
-      } catch (err: any) {
-        console.error('Erro ao salvar entrega:', err);
-        showToast('⚠️ Erro ao salvar ENTREGA no banco!');
-        // Reverte a alteração otimista
-        setDeliveredIds(prev => 
-           prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-        );
-      }
+    try {
+      await api.updateVendaByCliente(customerId, liveConfig.date, { entregue: isNowDelivered });
+    } catch (err: any) {
+      console.error('Erro ao salvar entrega:', err);
+      showToast('⚠️ Erro ao salvar ENTREGA no banco!');
+      // Reverte a alteração otimista
+      setDeliveredIds(prev => 
+         prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+      );
     }
   };
 
@@ -2262,30 +2063,27 @@ export default function App() {
   };
 
   const handleConfirmImport = async () => {
-    if (!importResult || !supabase) return;
+    if (!importResult) return;
     
     setIsSaving(true);
     setImportError(null);
     try {
       // 1. Fetch all existing customers to maintain ID consistency and find current max ID
-      const { data: existingCustomers, error: fetchError } = await supabase
-        .from('live_clientes')
-        .select('id, username');
-
-      if (fetchError) {
+      let existingCustomers: { id: number; username: string }[] = [];
+      try {
+        existingCustomers = await api.getClienteIds();
+      } catch (fetchError) {
         console.warn('Erro ao buscar clientes existentes:', fetchError);
       }
 
       const customerMap = new Map<string, number>();
       let currentMaxId = 0;
 
-      if (existingCustomers) {
-        existingCustomers.forEach(c => {
-          const uname = String(c.username || '').toLowerCase();
-          customerMap.set(uname, c.id);
-          if (c.id > currentMaxId) currentMaxId = c.id;
-        });
-      }
+      existingCustomers.forEach(c => {
+        const uname = String(c.username || '').toLowerCase();
+        customerMap.set(uname, c.id);
+        if (c.id > currentMaxId) currentMaxId = c.id;
+      });
 
       // 2. Prepare data with sequential IDs
       // We ignore the ID from the CSV because the user wants sequential IDs (1, 2, 3...)
@@ -2312,11 +2110,7 @@ export default function App() {
         throw new Error("Nenhum dado válido para salvar.");
       }
 
-      const { error } = await supabase
-        .from('live_clientes')
-        .upsert(dataToSave, { onConflict: 'username' });
-
-      if (error) throw error;
+      await api.upsertClientesUsername(dataToSave);
 
       await fetchCustomers(); // Refresh the list
       alert(`${importResult.totalUnique} clientes processados e salvos com sucesso!`);
@@ -2372,21 +2166,8 @@ export default function App() {
     
     setBlockModal({ visible: false, customer: null });
 
-    if (!supabase) {
-      setCustomers(prev => prev.map(c => 
-        c.id === customer.id ? { ...c, bloqueada: !customer.bloqueada } : c
-      ));
-      showToast(`Cliente ${customer.bloqueada ? 'desbloqueada' : 'bloqueada'} (Modo Local)`);
-      return;
-    }
-
     try {
-      const { error } = await supabase
-        .from('live_clientes')
-        .update({ bloqueada: !customer.bloqueada })
-        .eq('id', customer.id);
-        
-      if (error) throw error;
+      await api.updateCliente(Number(customer.id), { bloqueada: !customer.bloqueada });
       
       setCustomers(prev => prev.map(c => 
         c.id === customer.id ? { ...c, bloqueada: !customer.bloqueada } : c
@@ -2398,14 +2179,8 @@ export default function App() {
   };
 
   const saveCustomerObservacoes = async (customerId: number) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('live_clientes')
-        .update({ observacoes: tempObservacoes })
-        .eq('id', customerId);
-        
-      if (error) throw error;
+      await api.updateCliente(customerId, { observacoes: tempObservacoes });
       
       setCustomers(prev => prev.map(c => 
         c.id === customerId ? { ...c, observacoes: tempObservacoes } : c
@@ -2418,14 +2193,8 @@ export default function App() {
   };
 
   const saveCustomerTelefone = async (customerId: number) => {
-    if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from('live_clientes')
-        .update({ telefone: tempTelefone })
-        .eq('id', customerId);
-        
-      if (error) throw error;
+      await api.updateCliente(customerId, { telefone: tempTelefone });
       
       setCustomers(prev => prev.map(c => 
         c.id === customerId ? { ...c, telefone: tempTelefone } : c
@@ -2438,10 +2207,8 @@ export default function App() {
   };
 
   const handleExportProductsCSV = async () => {
-    if (!supabase) return;
     try {
-      const { data, error } = await supabase.from('produtos').select('*');
-      if (error) throw error;
+      const data = await api.getProdutos();
       if (!data || data.length === 0) {
         alert('Nenhum produto cadastrado no banco de dados para exportar.');
         return;
@@ -2453,18 +2220,14 @@ export default function App() {
   };
 
   const confirmProductCSVImport = async () => {
-    if (!productImportModal || !supabase) return;
+    if (!productImportModal) return;
     setIsImportingProducts(true);
     try {
       if (productImportModal.products.length === 0) {
         throw new Error('Nenhum produto válido encontrado para importar.');
       }
       
-      const { error } = await supabase
-        .from('produtos')
-        .upsert(productImportModal.products, { onConflict: 'referencia' });
-
-      if (error) throw error;
+      await api.upsertProdutos(productImportModal.products);
       
       alert(`${productImportModal.count} produtos importados/atualizados com sucesso!`);
       setProductImportModal(null);
@@ -4624,20 +4387,11 @@ export default function App() {
                     const p = deletePurchaseModal.purchase;
                     if (!p) return;
                     
-                    if (supabase) {
+                    if (isDbId(p.id)) {
                       try {
-                        const { error } = await supabase
-                          .from('live_vendas_itens')
-                          .delete()
-                          .eq('id', p.id);
-                        if (error) {
-                          console.error('Error deleting from supabase:', error);
-                          showToast('⚠️ Erro ao excluir do banco de dados!');
-                          setDeletePurchaseModal({ visible: false, purchase: null });
-                          return;
-                        }
+                        await api.deleteItem(Number(p.id));
                       } catch (err) {
-                        console.error('Catch error deleting from supabase:', err);
+                        console.error('Error deleting from DB:', err);
                         showToast('⚠️ Erro ao excluir do banco de dados!');
                         setDeletePurchaseModal({ visible: false, purchase: null });
                         return;
