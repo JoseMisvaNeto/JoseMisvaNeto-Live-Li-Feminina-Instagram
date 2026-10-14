@@ -43,12 +43,14 @@ import {
   Truck,
   PackageCheck,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Tag
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processCSVFiles, downloadCSV, processProductsCSV, downloadProductsCSV, ProcessingResult, InstagramProfile } from './utils/csvProcessor';
+import ProdutosScreen from './components/ProdutosScreen';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -127,6 +129,7 @@ const Navbar = ({
     { id: 'acerto', label: 'ACERTO', icon: LayoutDashboard },
     { id: 'sacolas', label: 'SACOLAS', icon: Package },
     { id: 'clientes', label: 'CLIENTES', icon: Users },
+    { id: 'produtos', label: 'PRODUTOS', icon: Tag },
     { id: 'import', label: 'IMPORT', icon: Upload },
   ];
 
@@ -3666,6 +3669,15 @@ export default function App() {
                 </div>
 
               </div>
+            </motion.div>
+          ) : activeTab === 'produtos' ? (
+            <motion.div
+              key="produtos-tab"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <ProdutosScreen showToast={showToast} />
             </motion.div>
           ) : (
             <motion.div

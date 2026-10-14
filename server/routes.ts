@@ -678,6 +678,151 @@ router.post(
   })
 );
 
+// Cria 1 produto (erro se referência já existir)
+router.post(
+  '/produtos',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const b = req.body || {};
+    const referencia = String(b.referencia || '').trim().toUpperCase();
+    const descricao = String(b.descricao || '').trim();
+    if (!referencia || !descricao) {
+      res.status(400).json({ error: 'referencia e descricao são obrigatórias' });
+      return;
+    }
+    const preco = Number(b.preco_venda) || 0;
+    const custo = Number(b.custo) || 0;
+    const lucro = Math.round((preco - custo) * 100) / 100;
+    const lucroPct = custo > 0 ? Math.round(((preco - custo) / custo) * 10000) / 100 : 0;
+
+    const existing = await db.execute({
+      sql: 'SELECT id FROM produtos WHERE referencia = ? LIMIT 1',
+      args: [referencia],
+    });
+    if (existing.rows.length > 0) {
+      res.status(409).json({ error: `A referência "${referencia}" já está cadastrada` });
+      return;
+    }
+
+    const r = await db.execute({
+      sql: `INSERT INTO produtos (id, referencia, descricao, preco_venda, estoque_atual, custo, lucro, lucro_percentual, estoque_minimo, fornecedor, data_cadastro)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            RETURNING id`,
+      args: [
+        randomUUID(),
+        referencia,
+        descricao,
+        preco,
+        Number.isFinite(Number(b.estoque_atual)) ? Number(b.estoque_atual) : 0,
+        custo,
+        lucro,
+        lucroPct,
+        Number.isFinite(Number(b.estoque_minimo)) ? Number(b.estoque_minimo) : 5,
+        b.fornecedor != null && String(b.fornecedor).trim() ? String(b.fornecedor).trim() : null,
+      ],
+    });
+    res.json({ ok: true, id: String(plainRow(r.rows[0]).id) });
+  })
+);
+
+// Edita 1 produto por id (permite trocar a referência)
+router.patch(
+  '/produtos/:id',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const id = String(req.params.id);
+    const b = req.body || {};
+    const sets: string[] = [];
+    const vals: any[] = [];
+
+    if (b.referencia !== undefined) {
+      const referencia = String(b.referencia).trim().toUpperCase();
+      if (!referencia) {
+        res.status(400).json({ error: 'referencia não pode ser vazia' });
+        return;
+      }
+      const dup = await db.execute({
+        sql: 'SELECT id FROM produtos WHERE referencia = ? AND id != ? LIMIT 1',
+        args: [referencia, id],
+      });
+      if (dup.rows.length > 0) {
+        res.status(409).json({ error: `A referência "${referencia}" já está cadastrada` });
+        return;
+      }
+      sets.push('referencia = ?');
+      vals.push(referencia);
+    }
+    if (b.descricao !== undefined) {
+      sets.push('descricao = ?');
+      vals.push(String(b.descricao).trim());
+    }
+    if (b.fornecedor !== undefined) {
+      sets.push('fornecedor = ?');
+      vals.push(b.fornecedor != null && String(b.fornecedor).trim() ? String(b.fornecedor).trim() : null);
+    }
+    if (b.estoque_atual !== undefined) {
+      sets.push('estoque_atual = ?');
+      vals.push(Math.max(0, Number(b.estoque_atual) || 0));
+    }
+    if (b.estoque_minimo !== undefined) {
+      sets.push('estoque_minimo = ?');
+      vals.push(Math.max(0, Number(b.estoque_minimo) || 0));
+    }
+
+    // Recalcula lucro quando preço ou custo mudam (ou quando ambos vierem)
+    const precisaRecalcular = b.preco_venda !== undefined || b.custo !== undefined;
+    let preco: number | null = null;
+    let custo: number | null = null;
+    if (precisaRecalcular) {
+      const atual = await db.execute({
+        sql: 'SELECT preco_venda, custo FROM produtos WHERE id = ? LIMIT 1',
+        args: [id],
+      });
+      if (atual.rows.length === 0) {
+        res.status(404).json({ error: 'Produto não encontrado' });
+        return;
+      }
+      const row = plainRow<Row>(atual.rows[0]);
+      preco = b.preco_venda !== undefined ? Number(b.preco_venda) || 0 : Number(row.preco_venda) || 0;
+      custo = b.custo !== undefined ? Number(b.custo) || 0 : Number(row.custo) || 0;
+      const lucro = Math.round((preco - custo) * 100) / 100;
+      const lucroPct = custo > 0 ? Math.round(((preco - custo) / custo) * 10000) / 100 : 0;
+      sets.push('preco_venda = ?', 'custo = ?', 'lucro = ?', 'lucro_percentual = ?');
+      vals.push(preco, custo, lucro, lucroPct);
+    }
+
+    if (sets.length === 0) {
+      res.status(400).json({ error: 'Nenhum campo para atualizar' });
+      return;
+    }
+    vals.push(id);
+    const result = await db.execute({
+      sql: `UPDATE produtos SET ${sets.join(', ')} WHERE id = ?`,
+      args: vals,
+    });
+    if (result.rowsAffected === 0) {
+      res.status(404).json({ error: 'Produto não encontrado' });
+      return;
+    }
+    res.json({ ok: true });
+  })
+);
+
+// Exclui 1 produto (cascade apaga movimentações de estoque; vendas das lives ficam)
+router.delete(
+  '/produtos/:id',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const id = String(req.params.id);
+    const result = await db.execute({ sql: 'DELETE FROM produtos WHERE id = ?', args: [id] });
+    if (result.rowsAffected === 0) {
+      res.status(404).json({ error: 'Produto não encontrado' });
+      return;
+    }
+    res.json({ ok: true });
+  })
+);
+
 // ---------------------------------------------------------------------------
 // MOVIMENTAÇÕES (trigger atualiza estoque)
 // ---------------------------------------------------------------------------

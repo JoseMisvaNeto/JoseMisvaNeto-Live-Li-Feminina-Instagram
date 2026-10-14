@@ -162,6 +162,29 @@ export const api = {
   getProdutoByRef: (ref: string) =>
     request<{ id: string | null }>(`/produtos/by-ref/${encodeURIComponent(ref)}`),
 
+  createProduto: (p: {
+    referencia: string;
+    descricao: string;
+    preco_venda: number;
+    custo: number;
+    estoque_atual?: number;
+    estoque_minimo?: number;
+    fornecedor?: string | null;
+  }) => request<{ ok: boolean; id: string }>('/produtos', { method: 'POST', body: JSON.stringify(p) }),
+
+  updateProduto: (id: string, p: Partial<{
+    referencia: string;
+    descricao: string;
+    preco_venda: number;
+    custo: number;
+    estoque_atual: number;
+    estoque_minimo: number;
+    fornecedor: string | null;
+  }>) => request<{ ok: boolean }>(`/produtos/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
+
+  deleteProduto: (id: string) =>
+    request<{ ok: boolean }>(`/produtos/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   upsertProdutos: (rows: Partial<ProdutoRow>[]) =>
     request<{ ok: boolean; count: number }>('/produtos/upsert', { method: 'POST', body: JSON.stringify(rows) }),
 
