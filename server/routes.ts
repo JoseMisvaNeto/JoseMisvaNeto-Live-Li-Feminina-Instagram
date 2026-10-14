@@ -287,6 +287,38 @@ router.get(
   })
 );
 
+// ATENÇÃO: rotas fixas devem vir ANTES de '/vendas/:id', senão o Express
+// casa '/vendas/by-cliente' como id="by-cliente" e o handler falha com NaN.
+router.patch(
+  '/vendas/by-cliente',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const clienteId = Number(req.query.cliente_id);
+    const dataLive = String(req.query.data_live || '');
+    const b = req.body || {};
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (b.pago !== undefined) {
+      sets.push('pago = ?');
+      vals.push(fromBool(b.pago));
+    }
+    if (b.entregue !== undefined) {
+      sets.push('entregue = ?');
+      vals.push(fromBool(b.entregue));
+    }
+    if (sets.length === 0) {
+      res.status(400).json({ error: 'Nenhum campo para atualizar' });
+      return;
+    }
+    vals.push(clienteId, dataLive);
+    await db.execute({
+      sql: `UPDATE live_vendas SET ${sets.join(', ')} WHERE cliente_id = ? AND data_live = ?`,
+      args: vals,
+    });
+    res.json({ ok: true });
+  })
+);
+
 router.patch(
   '/vendas/:id',
   wrap(async (req, res) => {
@@ -325,36 +357,6 @@ router.patch(
     }
     vals.push(id);
     await db.execute({ sql: `UPDATE live_vendas SET ${sets.join(', ')} WHERE id = ?`, args: vals });
-    res.json({ ok: true });
-  })
-);
-
-router.patch(
-  '/vendas/by-cliente',
-  wrap(async (req, res) => {
-    const db = getDb();
-    const clienteId = Number(req.query.cliente_id);
-    const dataLive = String(req.query.data_live || '');
-    const b = req.body || {};
-    const sets: string[] = [];
-    const vals: any[] = [];
-    if (b.pago !== undefined) {
-      sets.push('pago = ?');
-      vals.push(fromBool(b.pago));
-    }
-    if (b.entregue !== undefined) {
-      sets.push('entregue = ?');
-      vals.push(fromBool(b.entregue));
-    }
-    if (sets.length === 0) {
-      res.status(400).json({ error: 'Nenhum campo para atualizar' });
-      return;
-    }
-    vals.push(clienteId, dataLive);
-    await db.execute({
-      sql: `UPDATE live_vendas SET ${sets.join(', ')} WHERE cliente_id = ? AND data_live = ?`,
-      args: vals,
-    });
     res.json({ ok: true });
   })
 );
@@ -439,6 +441,21 @@ router.patch(
   })
 );
 
+// ATENÇÃO: rotas fixas devem vir ANTES de '/itens/:id' (mesma pegadinha de '/vendas/by-cliente').
+router.delete(
+  '/itens/vendas',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const raw = String(req.query.ids || '');
+    const ids = raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+    if (ids.length > 0) {
+      const ph = ids.map(() => '?').join(',');
+      await db.execute({ sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids });
+    }
+    res.json({ ok: true });
+  })
+);
+
 router.delete(
   '/itens/:id',
   wrap(async (req, res) => {
@@ -458,20 +475,6 @@ router.delete(
     if (ids.length > 0) {
       const ph = ids.map(() => '?').join(',');
       await db.execute({ sql: `DELETE FROM live_vendas_itens WHERE id IN (${ph})`, args: ids });
-    }
-    res.json({ ok: true });
-  })
-);
-
-router.delete(
-  '/itens/vendas',
-  wrap(async (req, res) => {
-    const db = getDb();
-    const raw = String(req.query.ids || '');
-    const ids = raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
-    if (ids.length > 0) {
-      const ph = ids.map(() => '?').join(',');
-      await db.execute({ sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids });
     }
     res.json({ ok: true });
   })
