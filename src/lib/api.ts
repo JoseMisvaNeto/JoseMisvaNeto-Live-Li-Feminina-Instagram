@@ -70,6 +70,15 @@ export interface ProdutoRow {
 }
 
 export const api = {
+  // ---- LIVES ----
+  getLivesAbertas: () => request<string[]>('/lives/abertas'),
+
+  abrirLive: (dataLive: string) =>
+    request<{ ok: boolean; data_live: string }>('/lives', { method: 'POST', body: JSON.stringify({ data_live: dataLive }) }),
+
+  fecharLive: (dataLive: string) =>
+    request<{ ok: boolean }>(`/lives/${encodeURIComponent(dataLive)}/fechar`, { method: 'PATCH' }),
+
   // ---- LIVE ----
   getLiveAtiva: () => request<{ data_live: string | null }>('/live-ativa'),
 

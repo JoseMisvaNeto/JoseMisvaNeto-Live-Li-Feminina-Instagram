@@ -106,15 +106,22 @@ const Navbar = ({
   onOpenSettings, 
   onOpenHistory,
   liveConfig,
-  setLiveConfig
+  setLiveConfig,
+  livesAbertas,
+  onSelectLive,
+  onNewLive
 }: { 
   activeTab: string, 
   setActiveTab: (t: string) => void, 
   onOpenSettings: () => void, 
   onOpenHistory: () => void,
   liveConfig: LiveConfig,
-  setLiveConfig: (c: LiveConfig) => void
+  setLiveConfig: (c: LiveConfig) => void,
+  livesAbertas: string[],
+  onSelectLive: (date: string) => void,
+  onNewLive: () => void
 }) => {
+  const [isLiveMenuOpen, setIsLiveMenuOpen] = useState(false);
   const tabs = [
     { id: 'live', label: 'LIVE', icon: ShoppingBag },
     { id: 'acerto', label: 'ACERTO', icon: LayoutDashboard },
@@ -167,11 +174,69 @@ const Navbar = ({
               <Settings className="w-4 h-4" />
             </button>
           </div>
-          <div className={cn("flex items-center gap-2 px-3 py-1.5 rounded-md border", liveConfig.isActive ? "bg-[#ccff00]/10 border-[#ccff00]/50 shadow-[0_0_15px_rgba(204,255,0,0.2)]" : "bg-white/5 border-white/10")}>
-            <div className={cn("w-2 h-2 rounded-full", liveConfig.isActive ? "bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" : "bg-white/20")} />
-            <span className={cn("text-sm font-black leading-none uppercase tracking-wider", liveConfig.isActive ? "text-[#ccff00]" : "text-white/40")}>
-              {liveConfig.isActive ? `LIVE ${safeFormatDate(liveConfig.date)}` : 'LIVE OFF'}
-            </span>
+          <div className="relative">
+            <button
+              onClick={() => setIsLiveMenuOpen(!isLiveMenuOpen)}
+              className={cn("flex items-center gap-2 px-3 py-1.5 rounded-md border transition-colors", liveConfig.isActive ? "bg-[#ccff00]/10 border-[#ccff00]/50 shadow-[0_0_15px_rgba(204,255,0,0.2)] hover:bg-[#ccff00]/20" : "bg-white/5 border-white/10 hover:bg-white/10")}
+            >
+              <div className={cn("w-2 h-2 rounded-full", liveConfig.isActive ? "bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" : "bg-white/20")} />
+              <span className={cn("text-sm font-black leading-none uppercase tracking-wider", liveConfig.isActive ? "text-[#ccff00]" : "text-white/40")}>
+                {liveConfig.isActive ? `LIVE ${safeFormatDate(liveConfig.date)}` : 'LIVE OFF'}
+              </span>
+              {livesAbertas.length > 1 && (
+                <span className="bg-[#ccff00] text-black text-[10px] font-black px-1.5 py-0.5 rounded-full leading-none">{livesAbertas.length}</span>
+              )}
+              <ChevronDown className={cn("w-3 h-3 transition-transform text-[#ccff00]/60", isLiveMenuOpen && "rotate-180")} />
+            </button>
+            <AnimatePresence>
+              {isLiveMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setIsLiveMenuOpen(false)} />
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                    className="absolute right-0 top-full mt-2 w-56 bg-[#111] border border-[#ccff00]/30 rounded-xl shadow-2xl z-50 overflow-hidden"
+                  >
+                    <div className="px-3 py-2 border-b border-white/5 text-[10px] font-bold text-white/40 uppercase tracking-widest">
+                      Lives Abertas ({livesAbertas.length})
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      {livesAbertas.length === 0 && (
+                        <div className="px-3 py-3 text-xs text-white/40">Nenhuma live aberta.</div>
+                      )}
+                      {livesAbertas.map(date => (
+                        <button
+                          key={date}
+                          onClick={() => {
+                            setIsLiveMenuOpen(false);
+                            if (!liveConfig.isActive || liveConfig.date !== date) onSelectLive(date);
+                          }}
+                          className={cn(
+                            "w-full text-left px-3 py-2.5 text-sm font-bold hover:bg-[#ccff00]/10 transition-colors flex items-center justify-between",
+                            liveConfig.isActive && liveConfig.date === date ? "text-[#ccff00] bg-[#ccff00]/5" : "text-white/70"
+                          )}
+                        >
+                          <span>{safeFormatDate(date)}</span>
+                          {liveConfig.isActive && liveConfig.date === date && (
+                            <span className="text-[9px] uppercase tracking-widest text-[#ccff00]/60">Atual</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsLiveMenuOpen(false);
+                        onNewLive();
+                      }}
+                      className="w-full text-left px-3 py-2.5 border-t border-white/5 text-xs font-black text-[#ccff00] hover:bg-[#ccff00]/10 transition-colors uppercase tracking-widest"
+                    >
+                      + Nova Live
+                    </button>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         </div>
     </nav>
@@ -192,6 +257,40 @@ const safeFormatDate = (dateStr: string | undefined | null) => {
   }
 };
 
+// Chaves do localStorage que são por-live (namespaced por data_live)
+const LIVE_LS_BASES = ['purchases', 'sentMessages', 'sentWhatsappMessages', 'shoppingList', 'timeline', 'manualPaidIds', 'deliveredIds'] as const;
+
+const getInitialLiveDate = (): string => {
+  try {
+    const saved = localStorage.getItem('liveConfig');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object' && typeof parsed.date === 'string') return parsed.date;
+    }
+  } catch (e) { console.error('Error parsing liveConfig for date key:', e); }
+  return new Date().toISOString().split('T')[0];
+};
+
+const INITIAL_LIVE_DATE = getInitialLiveDate();
+
+const readLiveLs = <T,>(key: string, fallback: T, date: string): T => {
+  try {
+    const saved = localStorage.getItem(`${key}@${date}`);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed !== null && parsed !== undefined) return parsed as T;
+    }
+  } catch (e) { console.error(`Error parsing ${key}@${date}:`, e); }
+  return fallback;
+};
+
+const removeLiveLsKeys = (date: string) => {
+  LIVE_LS_BASES.forEach(b => {
+    localStorage.removeItem(`${b}@${date}`);
+    localStorage.removeItem(b); // chaves legadas sem sufixo (pré multi-live)
+  });
+};
+
 export default function App() {
   console.log('[App] Rendering started');
   const [activeTab, setActiveTab] = useState(() => window.innerWidth < 768 ? 'sacolas' : 'live');
@@ -210,35 +309,42 @@ export default function App() {
   useEffect(() => {
     customersRef.current = customers;
   }, [customers]);
+
+  // Live Config State (declarada no topo: os caches por-live do localStorage dependem dela)
+  const [liveConfig, setLiveConfig] = useState<LiveConfig>(() => {
+    const saved = localStorage.getItem('liveConfig');
+    if (saved) {
+      try { 
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch (e) { console.error("Error parsing liveConfig:", e); }
+    }
+    return {
+      isActive: false,
+      date: INITIAL_LIVE_DATE
+    };
+  });
+  const [dataLive, setDataLive] = useState(liveConfig.date);
+  // Data à qual o estado por-live (purchases, sentMessages etc.) pertence.
+  // Evita que o efeito de persistência grave o estado da live antiga sob a chave da nova ao trocar.
+  const stateLiveDateRef = useRef<string>(liveConfig.date);
+  const [livesAbertas, setLivesAbertas] = useState<string[]>([]);
+  const [isNovaLiveModalOpen, setIsNovaLiveModalOpen] = useState(false);
+  const [novaLiveData, setNovaLiveData] = useState(INITIAL_LIVE_DATE);
+
   const [isFetchingCustomers, setIsFetchingCustomers] = useState(false);
-  const [shoppingList, setShoppingList] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('shoppingList');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing shoppingList:", e); }
-    }
-    return [];
-  });
-  const [timeline, setTimeline] = useState<Customer[]>(() => {
-    const saved = localStorage.getItem('timeline');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing timeline:", e); }
-    }
-    return [];
-  });
+  const [shoppingList, setShoppingList] = useState<Customer[]>(() => readLiveLs('shoppingList', [] as Customer[], INITIAL_LIVE_DATE));
+  const [timeline, setTimeline] = useState<Customer[]>(() => readLiveLs('timeline', [] as Customer[], INITIAL_LIVE_DATE));
   
   useEffect(() => {
-    localStorage.setItem('shoppingList', JSON.stringify(shoppingList));
-  }, [shoppingList]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`shoppingList@${dataLive}`, JSON.stringify(shoppingList));
+  }, [shoppingList, dataLive]);
 
   useEffect(() => {
-    localStorage.setItem('timeline', JSON.stringify(timeline));
-  }, [timeline]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`timeline@${dataLive}`, JSON.stringify(timeline));
+  }, [timeline, dataLive]);
   
   // Message Template State
   const [messageTemplate, setMessageTemplate] = useState(() => {
@@ -258,35 +364,19 @@ export default function App() {
   const [editingLiveId, setEditingLiveId] = useState<string | null>(null);
   const [editingLiveObs, setEditingLiveObs] = useState('');
 
-  const [sentMessages, setSentMessages] = useState<string[]>(() => {
-    const saved = localStorage.getItem('sentMessages');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing sentMessages:", e); }
-    }
-    return [];
-  });
+  const [sentMessages, setSentMessages] = useState<string[]>(() => readLiveLs('sentMessages', [] as string[], INITIAL_LIVE_DATE));
 
-  const [sentWhatsappMessages, setSentWhatsappMessages] = useState<string[]>(() => {
-    const saved = localStorage.getItem('sentWhatsappMessages');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing sentWhatsappMessages:", e); }
-    }
-    return [];
-  });
+  const [sentWhatsappMessages, setSentWhatsappMessages] = useState<string[]>(() => readLiveLs('sentWhatsappMessages', [] as string[], INITIAL_LIVE_DATE));
 
   useEffect(() => {
-    localStorage.setItem('sentMessages', JSON.stringify(sentMessages));
-  }, [sentMessages]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`sentMessages@${dataLive}`, JSON.stringify(sentMessages));
+  }, [sentMessages, dataLive]);
 
   useEffect(() => {
-    localStorage.setItem('sentWhatsappMessages', JSON.stringify(sentWhatsappMessages));
-  }, [sentWhatsappMessages]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`sentWhatsappMessages@${dataLive}`, JSON.stringify(sentWhatsappMessages));
+  }, [sentWhatsappMessages, dataLive]);
 
   // Focus Mode State
   const [isFocusModeOpen, setIsFocusModeOpen] = useState(false);
@@ -297,6 +387,10 @@ export default function App() {
     message: string;
   } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
   const [focusQueue, setFocusQueue] = useState<GroupedPurchase[]>([]);
   
   // Danger Zone State
@@ -324,31 +418,27 @@ export default function App() {
   const [validatedRefs, setValidatedRefs] = useState<Set<string>>(new Set());
   const [pendingRefValidation, setPendingRefValidation] = useState<{ref: string, action: 'focus_price' | 'submit'} | null>(null);
   const [purchases, setPurchases] = useState<Purchase[]>(() => {
-    const saved = localStorage.getItem('purchases');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          parsed.sort((a, b) => {
-            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-            const validA = !isNaN(timeA) ? timeA : 0;
-            const validB = !isNaN(timeB) ? timeB : 0;
-            if (validB !== validA) return validB - validA;
-            const idA = Number(a.id) || 0;
-            const idB = Number(b.id) || 0;
-            return idB - idA;
-          });
-          return parsed;
-        }
-      } catch (e) { console.error("Error parsing purchases:", e); }
+    const parsed = readLiveLs<Purchase[]>('purchases', [], INITIAL_LIVE_DATE);
+    if (Array.isArray(parsed)) {
+      parsed.sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        const validA = !isNaN(timeA) ? timeA : 0;
+        const validB = !isNaN(timeB) ? timeB : 0;
+        if (validB !== validA) return validB - validA;
+        const idA = Number(a.id) || 0;
+        const idB = Number(b.id) || 0;
+        return idB - idA;
+      });
+      return parsed;
     }
     return [];
   });
 
   useEffect(() => {
-    localStorage.setItem('purchases', JSON.stringify(purchases));
-  }, [purchases]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`purchases@${dataLive}`, JSON.stringify(purchases));
+  }, [purchases, dataLive]);
 
 
 
@@ -446,22 +536,6 @@ export default function App() {
   }, [clientesSearch, customers, purchases]);
   const [processingIds, setProcessingIds] = useState<string[]>([]);
 
-  // Live Config State
-  const [liveConfig, setLiveConfig] = useState<LiveConfig>(() => {
-    const saved = localStorage.getItem('liveConfig');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing liveConfig:", e); }
-    }
-    return {
-      isActive: false,
-      date: new Date().toISOString().split('T')[0]
-    };
-  });
-  const [dataLive, setDataLive] = useState(liveConfig.date);
-
   useEffect(() => {
     if (selectedCustomer) {
       if (selectedCustomer.nome_completo === 'Novo Cliente') {
@@ -479,50 +553,59 @@ export default function App() {
     }
   }, [liveConfig]);
 
-  // Attempt to auto-sync the active live from the database when first loading or missing local state
+  const refreshLives = useCallback(async () => {
+    try {
+      const abertas = await api.getLivesAbertas();
+      setLivesAbertas(abertas);
+      return abertas;
+    } catch (err) {
+      console.error('Erro ao listar lives abertas:', err);
+      return [] as string[];
+    }
+  }, []);
+
+  // Ao carregar o app: sincroniza a live local com as lives abertas do banco.
+  // (Cobre troca entre aparelhos: se a live local foi fechada em outro, assume outra aberta ou desliga.)
   useEffect(() => {
-    const fetchActiveLiveDate = async () => {
-      if (liveConfig.isActive) return;
-
-      try {
-        const { data_live: latestLiveDate } = await api.getLiveAtiva();
-
-        if (latestLiveDate) {
-          console.log('Automagically connecting to active live:', latestLiveDate);
-          setLiveConfig({
-            isActive: true,
-            date: latestLiveDate,
-          });
+    let cancelled = false;
+    (async () => {
+      const abertas = await refreshLives();
+      if (cancelled) return;
+      setLiveConfig(prev => {
+        if (prev.isActive) {
+          if (abertas.includes(prev.date)) return prev;
+          return abertas.length > 0
+            ? { isActive: true, date: abertas[0] }
+            : { isActive: false, date: prev.date };
         }
-      } catch (err) {
-        console.error('Failed to auto-fetch active live', err);
-      }
-    };
+        return abertas.length > 0 ? { isActive: true, date: abertas[0] } : prev;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [refreshLives]);
 
-    fetchActiveLiveDate();
-  }, [liveConfig.isActive]);
+  const handleSelectLive = useCallback((date: string) => {
+    setLiveConfig({ isActive: true, date });
+    setDataLive(date);
+  }, []);
 
-  const [manualPaidIds, setManualPaidIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('manualPaidIds');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing manualPaidIds:", e); }
+  const handleAbrirNovaLive = useCallback(async () => {
+    try {
+      await api.abrirLive(novaLiveData);
+      setLiveConfig({ isActive: true, date: novaLiveData });
+      setDataLive(novaLiveData);
+      setIsNovaLiveModalOpen(false);
+      refreshLives();
+      showToast(`Live ${safeFormatDate(novaLiveData)} aberta!`);
+    } catch (err: any) {
+      console.error('Erro ao abrir live:', err);
+      showToast(`Erro ao abrir live: ${err.message}`);
     }
-    return [];
-  });
+  }, [novaLiveData, refreshLives, showToast]);
 
-  const [deliveredIds, setDeliveredIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('deliveredIds');
-    if (saved) {
-      try { 
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      } catch (e) { console.error("Error parsing deliveredIds:", e); }
-    }
-    return [];
-  });
+  const [manualPaidIds, setManualPaidIds] = useState<string[]>(() => readLiveLs('manualPaidIds', [] as string[], INITIAL_LIVE_DATE));
+
+  const [deliveredIds, setDeliveredIds] = useState<string[]>(() => readLiveLs('deliveredIds', [] as string[], INITIAL_LIVE_DATE));
 
   // Recovery/Sync logic
   const recoverData = useCallback(async (forced = false) => {
@@ -642,12 +725,27 @@ export default function App() {
   }, [liveConfig.isActive, dataLive, recoverData]);
 
   useEffect(() => {
-    localStorage.setItem('manualPaidIds', JSON.stringify(manualPaidIds));
-  }, [manualPaidIds]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`manualPaidIds@${dataLive}`, JSON.stringify(manualPaidIds));
+  }, [manualPaidIds, dataLive]);
 
   useEffect(() => {
-    localStorage.setItem('deliveredIds', JSON.stringify(deliveredIds));
-  }, [deliveredIds]);
+    if (stateLiveDateRef.current !== dataLive) return;
+    localStorage.setItem(`deliveredIds@${dataLive}`, JSON.stringify(deliveredIds));
+  }, [deliveredIds, dataLive]);
+
+  // Ao trocar de live, recarrega os caches locais da data selecionada
+  useEffect(() => {
+    stateLiveDateRef.current = dataLive;
+    setShoppingList(readLiveLs('shoppingList', [] as Customer[], dataLive));
+    setTimeline(readLiveLs('timeline', [] as Customer[], dataLive));
+    setPurchases(readLiveLs('purchases', [] as Purchase[], dataLive));
+    setSentMessages(readLiveLs('sentMessages', [] as string[], dataLive));
+    setSentWhatsappMessages(readLiveLs('sentWhatsappMessages', [] as string[], dataLive));
+    setManualPaidIds(readLiveLs('manualPaidIds', [] as string[], dataLive));
+    setDeliveredIds(readLiveLs('deliveredIds', [] as string[], dataLive));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLive]);
 
   const [confirmingUnpayId, setConfirmingUnpayId] = useState<string | null>(null);
   const unpayTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1307,16 +1405,26 @@ export default function App() {
     setIsRemovingItem(true);
     
     try {
-      // Obter itens locais desse grupo para apagar do banco (apenas IDs válidos de BD)
-      const groupItems = purchasesRef.current.filter(p => Number(p.customerId) === customerId);
-      const itemIds = groupItems.map(p => p.id).filter(isDbId);
-      
-      if (itemIds.length > 0) {
-        await api.deleteItems(itemIds.map(Number));
+      // Apagar a venda (cabeçalho) da live atual — a API apaga os itens em cascata.
+      // Sem apagar a cabeçalho, o sync (polling) ressuscitava a sacola na tabela.
+      const { id: vendaId } = await api.findVendaId(customerId, dataLive);
+      if (vendaId) {
+        await api.deleteVendasByIds([vendaId]);
+      } else {
+        // Fallback: apagar apenas itens válidos do banco (caso a cabeçalho não exista)
+        const groupItems = purchasesRef.current.filter(p => Number(p.customerId) === customerId);
+        const itemIds = groupItems.map(p => p.id).filter(isDbId);
+        if (itemIds.length > 0) {
+          await api.deleteItems(itemIds.map(Number));
+        }
       }
 
       setPurchases(prev => prev.filter(p => Number(p.customerId) !== customerId));
       setShoppingList(prev => prev.filter(c => Number(c.id) !== customerId));
+      setManualPaidIds(prev => prev.filter(id => id !== String(customerId)));
+      setDeliveredIds(prev => prev.filter(id => id !== String(customerId)));
+      setSentMessages(prev => prev.filter(id => id !== String(customerId)));
+      setSentWhatsappMessages(prev => prev.filter(id => id !== String(customerId)));
       setDeleteModal(null);
       setContextMenu(null);
     } catch (e: any) {
@@ -1559,11 +1667,6 @@ export default function App() {
     }
   }, [isHistoryOpen]);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
   const handleClearAllData = async () => {
     setIsSavingSale(true);
     try {
@@ -1589,13 +1692,11 @@ export default function App() {
       setCustomers([]);
       setHistoryData([]);
       
-      // Remove specific keys from Local Storage
-      localStorage.removeItem('purchases');
-      localStorage.removeItem('sentMessages');
-      localStorage.removeItem('sentWhatsappMessages');
-      localStorage.removeItem('shoppingList');
-      localStorage.removeItem('timeline');
-      localStorage.removeItem('manualPaidIds');
+      // Remove chaves do Local Storage (legadas e namespaced de todas as lives)
+      LIVE_LS_BASES.forEach(b => localStorage.removeItem(b));
+      Object.keys(localStorage).forEach(k => {
+        if (LIVE_LS_BASES.some(b => k.startsWith(`${b}@`))) localStorage.removeItem(k);
+      });
       localStorage.removeItem('liveConfig');
       // We keep 'messageTemplate' as it's a user configuration
       
@@ -1772,15 +1873,14 @@ export default function App() {
             await api.deleteVendasByIds(vendaIds);
           }
 
-          showToast('Acerto finalizado com sucesso! Estoque atualizado via Trigger.');
-          
-          // Limpar estado local
-          setPurchases([]);
-          setSentMessages([]);
-          setSentWhatsappMessages([]);
-          setShoppingList([]);
-          setTimeline([]);
-          setManualPaidIds([]);
+          // 3. Fechar esta live no registro e verificar se há outras abertas
+          try { await api.fecharLive(dataLive); } catch (e) { console.error('Erro ao fechar live:', e); }
+          let restantes: string[] = [];
+          try {
+            restantes = (await api.getLivesAbertas()).filter(d => d !== dataLive);
+          } catch (e) { console.error('Erro ao listar lives restantes:', e); }
+
+          // Limpar estado de navegação
           setFechamentoSearch('');
           setSearchQuery('');
           setSelectedCustomer(null);
@@ -1789,15 +1889,27 @@ export default function App() {
           setAcertoRef('');
           setAcertoValue('');
           setAcertoQuantity('1');
-          setLiveConfig({ isActive: false, date: new Date().toISOString().split('T')[0] });
-          
-          // Limpar Local Storage
-          localStorage.removeItem('purchases');
-          localStorage.removeItem('sentMessages');
-          localStorage.removeItem('sentWhatsappMessages');
-          localStorage.removeItem('shoppingList');
-          localStorage.removeItem('timeline');
-          localStorage.removeItem('manualPaidIds');
+
+          if (restantes.length > 0) {
+            // Há outras lives abertas → troca para a mais recente
+            const proxima = restantes[0];
+            removeLiveLsKeys(dataLive);
+            setLiveConfig({ isActive: true, date: proxima });
+            setDataLive(proxima);
+            showToast(`Live ${safeFormatDate(dataLive)} finalizada! Continuando na live ${safeFormatDate(proxima)}.`);
+          } else {
+            // Nenhuma live aberta → volta para a tela de início
+            setPurchases([]);
+            setSentMessages([]);
+            setSentWhatsappMessages([]);
+            setShoppingList([]);
+            setTimeline([]);
+            setManualPaidIds([]);
+            setDeliveredIds([]);
+            removeLiveLsKeys(dataLive);
+            setLiveConfig({ isActive: false, date: new Date().toISOString().split('T')[0] });
+            showToast('Acerto finalizado com sucesso! Estoque atualizado via Trigger.');
+          }
           
         } catch (err) {
           console.error('Erro crítico na finalização:', err);
@@ -2248,6 +2360,12 @@ export default function App() {
         onOpenHistory={() => setIsHistoryOpen(true)}
         liveConfig={liveConfig}
         setLiveConfig={setLiveConfig}
+        livesAbertas={livesAbertas}
+        onSelectLive={handleSelectLive}
+        onNewLive={() => {
+          setNovaLiveData(new Date().toISOString().split('T')[0]);
+          setIsNovaLiveModalOpen(true);
+        }}
       />
 
       <main className="pt-16 pb-4 px-4 max-w-7xl mx-auto">
@@ -2288,9 +2406,15 @@ export default function App() {
                       Cancelar
                     </button>
                     <button
-                      onClick={() => {
+                      onClick={async () => {
+                        try {
+                          await api.abrirLive(liveConfig.date);
+                        } catch (err) {
+                          console.error('Erro ao registrar live:', err);
+                        }
                         setLiveConfig({ ...liveConfig, isActive: true });
                         setDataLive(liveConfig.date);
+                        refreshLives();
                       }}
                       className="flex-[2] py-3 bg-[#ccff00] text-black font-black text-xs uppercase tracking-widest rounded-xl hover:shadow-[0_0_30px_rgba(204,255,0,0.3)] transition-all flex items-center justify-center gap-2"
                     >
@@ -2772,6 +2896,23 @@ export default function App() {
                                   </div>
                                   <div className="text-[10px] text-white/50 leading-tight">
                                     Gera texto formatado com TAB para colar no Excel.
+                                  </div>
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setIsFinalizarModalOpen(false);
+                                    setNovaLiveData(new Date().toISOString().split('T')[0]);
+                                    setIsNovaLiveModalOpen(true);
+                                  }}
+                                  className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/5 transition-colors group"
+                                >
+                                  <div className="font-black text-white group-hover:text-[#ccff00] text-sm uppercase tracking-wide mb-0.5 flex items-center gap-2">
+                                    Abrir Outra Live
+                                    <Calendar className="w-3 h-3" />
+                                  </div>
+                                  <div className="text-[10px] text-white/50 leading-tight">
+                                    Abre uma nova data sem finalizar a live atual.
                                   </div>
                                 </button>
 
@@ -4291,6 +4432,57 @@ export default function App() {
                   className="px-4 py-2 rounded-md bg-red-500 text-white font-black text-sm hover:bg-red-600 transition-colors shadow-[0_0_15px_rgba(239,68,68,0.3)]"
                 >
                   SIM, EXCLUIR
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Nova Live Modal */}
+      <AnimatePresence>
+        {isNovaLiveModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#111] border border-[#ccff00]/30 rounded-xl p-6 max-w-md w-full shadow-2xl"
+            >
+              <div className="flex items-center gap-3 text-[#ccff00] mb-4">
+                <Calendar className="w-6 h-6" />
+                <h3 className="text-lg font-black uppercase tracking-widest">Abrir Nova Live</h3>
+              </div>
+              <p className="text-white/70 text-sm mb-6 leading-relaxed">
+                A live atual continua aberta e poderá ser acessada pelo seletor na barra superior.
+              </p>
+              <div className="mb-6">
+                <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-2">Data da Live</label>
+                <input
+                  type="date"
+                  value={novaLiveData}
+                  onChange={(e) => setNovaLiveData(e.target.value)}
+                  className="w-full bg-[#222] border border-white/10 focus:border-[#ccff00] focus:bg-black p-3 rounded-xl outline-none text-xl font-black text-[#ccff00] transition-colors text-center"
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setIsNovaLiveModalOpen(false)}
+                  className="px-4 py-2 rounded-md text-white/60 hover:text-white hover:bg-white/5 transition-colors text-sm font-bold"
+                >
+                  CANCELAR
+                </button>
+                <button
+                  onClick={handleAbrirNovaLive}
+                  autoFocus
+                  className="px-4 py-2 rounded-md bg-[#ccff00] text-black font-black text-sm hover:shadow-[0_0_15px_rgba(204,255,0,0.3)] transition-all"
+                >
+                  ABRIR LIVE
                 </button>
               </div>
             </motion.div>

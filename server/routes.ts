@@ -95,6 +95,52 @@ router.get(
 );
 
 // ---------------------------------------------------------------------------
+// LIVES (múltiplas lives abertas simultaneamente)
+// ---------------------------------------------------------------------------
+
+router.get(
+  '/lives/abertas',
+  wrap(async (_req, res) => {
+    const db = getDb();
+    const r = await db.execute({
+      sql: `SELECT data_live FROM lives WHERE status = 'aberta' ORDER BY data_live DESC`,
+      args: [],
+    });
+    res.json(r.rows.map((x) => plainRow(x).data_live));
+  })
+);
+
+router.post(
+  '/lives',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const dataLive = String(req.body?.data_live || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataLive)) {
+      res.status(400).json({ error: 'data_live inválida (use AAAA-MM-DD)' });
+      return;
+    }
+    await db.execute({
+      sql: `INSERT INTO lives (data_live, status) VALUES (?, 'aberta') ON CONFLICT(data_live) DO UPDATE SET status = 'aberta'`,
+      args: [dataLive],
+    });
+    res.json({ ok: true, data_live: dataLive });
+  })
+);
+
+router.patch(
+  '/lives/:data/fechar',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const dataLive = String(req.params.data);
+    await db.execute({
+      sql: `UPDATE lives SET status = 'fechada' WHERE data_live = ?`,
+      args: [dataLive],
+    });
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // VENDAS
 // ---------------------------------------------------------------------------
 
@@ -757,6 +803,7 @@ router.delete(
         { sql: 'DELETE FROM live_vendas_itens', args: [] },
         { sql: 'DELETE FROM live_vendas', args: [] },
         { sql: 'DELETE FROM live_historico', args: [] },
+        { sql: 'DELETE FROM lives', args: [] },
       ],
       'write'
     );

@@ -65,3 +65,9 @@ CREATE TABLE IF NOT EXISTS live_historico (
   observacoes TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS lives (
+  data_live TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'aberta',
+  aberta_em TEXT DEFAULT (datetime('now'))
+);
