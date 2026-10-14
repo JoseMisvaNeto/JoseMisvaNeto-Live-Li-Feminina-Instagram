@@ -413,6 +413,16 @@ export default function App() {
   const [acertoRef, setAcertoRef] = useState('');
   const [acertoValue, setAcertoValue] = useState('');
   const [acertoQuantity, setAcertoQuantity] = useState('1');
+  const [isRefOptional, setIsRefOptional] = useState(() => localStorage.getItem('acertoRefOptional') === '1');
+  // Referência efetiva: se opcional e vazia, usa "SEM REF" no lugar
+  const effectiveAcertoRef = isRefOptional && !acertoRef.trim() ? 'SEM REF' : acertoRef.trim().toUpperCase();
+  const toggleRefOptional = () => {
+    setIsRefOptional(prev => {
+      const next = !prev;
+      localStorage.setItem('acertoRefOptional', next ? '1' : '0');
+      return next;
+    });
+  };
   const [showRecentPurchases, setShowRecentPurchases] = useState(false);
   const [deletePurchaseModal, setDeletePurchaseModal] = useState<{ visible: boolean, purchase: Purchase | null }>({ visible: false, purchase: null });
   const [validatedRefs, setValidatedRefs] = useState<Set<string>>(new Set());
@@ -1236,7 +1246,7 @@ export default function App() {
   const [isSubmittingAcerto, setIsSubmittingAcerto] = useState(false);
 
   const executeAcertoSubmit = async () => {
-    if (!acertoId || !acertoRef || !acertoValue || !acertoQuantity || isSubmittingAcerto) return;
+    if (!acertoId || !effectiveAcertoRef || !acertoValue || !acertoQuantity || isSubmittingAcerto) return;
 
     const activeCustomer = acertoActiveCustomer;
     if (!activeCustomer) return;
@@ -1259,7 +1269,7 @@ export default function App() {
       // 2. Insere o item vinculado à venda
       const { id: itemId } = await api.insertItem({
         venda_id: vendaId,
-        referencia: acertoRef.trim().toUpperCase(),
+        referencia: effectiveAcertoRef,
         preco: val,
         quantidade: qty
       });
@@ -1271,7 +1281,7 @@ export default function App() {
         id: String(itemId),
         venda_id: String(vendaId),
         customerId: Number(activeCustomer.id),
-        reference: acertoRef.trim().toUpperCase(),
+        reference: effectiveAcertoRef,
         value: val,
         quantity: qty,
         paid: false,
@@ -1311,7 +1321,7 @@ export default function App() {
 
   const handleAcertoSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!acertoId || !acertoRef || !acertoValue || !acertoQuantity) return;
+    if (!acertoId || !effectiveAcertoRef || !acertoValue || !acertoQuantity) return;
 
     const activeCustomer = acertoActiveCustomer;
     if (!activeCustomer) return;
@@ -1321,18 +1331,22 @@ export default function App() {
       return;
     }
 
-    try {
-      const isValid = await validateRef(acertoRef, 'submit');
-      if (!isValid) {
-        refInput.current?.focus();
+    // Valida a referência no estoque apenas com o toggle desligado
+    if (!isRefOptional && acertoRef.trim()) {
+      try {
+        const isValid = await validateRef(acertoRef, 'submit');
+        if (!isValid) {
+          refInput.current?.focus();
+          return;
+        }
+      } catch (err) {
+        console.error('Promise rejection during acerto submission:', err);
+        showToast('⚠️ Erro ao tentar lançar o acerto.');
         return;
       }
-
-      await executeAcertoSubmit();
-    } catch (err) {
-      console.error('Promise rejection during acerto submission:', err);
-      showToast('⚠️ Erro ao tentar lançar o acerto.');
     }
+
+    await executeAcertoSubmit();
   };
 
   const confirmInvalidRefModal = () => {
@@ -2664,7 +2678,12 @@ export default function App() {
                         if (e.key === 'Enter') {
                           e.preventDefault();
                           if (acertoActiveCustomer) {
-                            refInput.current?.focus();
+                            // REF OPC. ligado: pula a Referência e vai direto para o Preço
+                            if (isRefOptional) {
+                              valueInput.current?.focus();
+                            } else {
+                              refInput.current?.focus();
+                            }
                           } else {
                             showToast('⚠️ Código não encontrado na lista de compras');
                           }
@@ -2684,6 +2703,19 @@ export default function App() {
                   <div className="space-y-0.5 relative">
                     <div className="flex justify-between items-center">
                       <label className="text-[13px] font-mono text-[#ccff00]/60 uppercase tracking-widest">Referência</label>
+                      <button
+                        type="button"
+                        onClick={toggleRefOptional}
+                        title={isRefOptional ? "Referência opcional ATIVA — itens sem REF serão salvos como 'SEM REF'" : "Ativar para lançar sem digitar referência"}
+                        className={cn(
+                          "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border transition-all",
+                          isRefOptional
+                            ? "bg-[#ccff00]/15 text-[#ccff00] border-[#ccff00]/40"
+                            : "bg-white/5 text-white/25 border-white/10 hover:text-white/50 hover:border-white/20"
+                        )}
+                      >
+                        REF OPC.
+                      </button>
                     </div>
                     <div className="relative">
                       <input
@@ -2698,6 +2730,11 @@ export default function App() {
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             const val = e.currentTarget.value;
+                            // Toggle REF OPC. ligado: Enter sempre vai direto para o preço
+                            if (isRefOptional) {
+                              valueInput.current?.focus();
+                              return;
+                            }
                             validateRef(val, 'focus_price').then(isValid => {
                               if (isValid) {
                                 // Foco imediato no preço se a referência for válida
@@ -2708,9 +2745,10 @@ export default function App() {
                         }}
                         className={cn(
                           "w-full bg-[#1a1a1a] border transition-all duration-300 p-2 rounded-lg outline-none text-base font-bold placeholder:text-white/20 shadow-sm",
-                          "border-white/5 focus:border-[#ccff00] focus:bg-black focus:shadow-[0_0_15px_rgba(204,255,0,0.15)]"
+                          "border-white/5 focus:border-[#ccff00] focus:bg-black focus:shadow-[0_0_15px_rgba(204,255,0,0.15)]",
+                          isRefOptional && "placeholder:text-[#ccff00]/25"
                         )}
-                        placeholder="Ex: REF01"
+                        placeholder={isRefOptional ? "Opcional (vazio = SEM REF)" : "Ex: REF01"}
                       />
                     </div>
                   </div>
@@ -2723,7 +2761,7 @@ export default function App() {
                       value={acertoValue}
                       onChange={(e) => setAcertoValue(e.target.value)}
                       onFocus={() => setShowRecentPurchases(false)}
-                      disabled={!acertoRef}
+                      disabled={!acertoRef && !isRefOptional}
                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), qtyInput.current?.focus())}
                       className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-300 p-2 rounded-lg outline-none text-base font-bold text-[#ccff00] placeholder:text-white/20 disabled:opacity-20 disabled:cursor-not-allowed shadow-sm"
                       placeholder="0.00"
@@ -2737,7 +2775,7 @@ export default function App() {
                       value={acertoQuantity}
                       onChange={(e) => setAcertoQuantity(e.target.value)}
                       onFocus={() => setShowRecentPurchases(false)}
-                      disabled={!acertoRef}
+                      disabled={!acertoRef && !isRefOptional}
                       onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAcertoSubmit(e))}
                       className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-300 p-2 rounded-lg outline-none text-base font-bold placeholder:text-white/20 disabled:opacity-20 disabled:cursor-not-allowed shadow-sm"
                       placeholder="1"
@@ -2746,7 +2784,7 @@ export default function App() {
                   <div className="flex items-end">
                     <button
                       type="submit"
-                      disabled={!acertoRef}
+                      disabled={!acertoId || !effectiveAcertoRef || !acertoValue || !acertoQuantity || isSubmittingAcerto}
                       className="w-full h-[42px] bg-[#ccff00] text-black font-black text-sm rounded-lg hover:shadow-[0_0_25px_rgba(204,255,0,0.4)] transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-20 disabled:cursor-not-allowed active:scale-95"
                     >
                       LANÇAR <ArrowRight className="w-4 h-4" />
