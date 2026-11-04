@@ -1,6 +1,18 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import { getDb, toBool, fromBool, plainRow } from './db';
+import {
+  executarImportacao,
+  modoImportacaoValido,
+  validarLinhasImportacao,
+  type ProductImportMode,
+} from './productImport';
+import {
+  baixarEstoqueItem,
+  gerarEstornosItens,
+  liquidarEstoqueLive,
+  movimentarEstoqueItem,
+} from './stock';
 
 const router = Router();
 
@@ -244,6 +256,23 @@ router.post(
   })
 );
 
+// Fecha o estoque de uma live. A baixa acontece item a item no POST /itens;
+// aqui só se completa o que faltou (vendas antigas) e se desvinculam as
+// movimentações para a limpeza da live não estornar venda paga.
+router.post(
+  '/vendas/estoque-final',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const b = req.body || {};
+    const resultado = await liquidarEstoqueLive(
+      db,
+      String(b.data_live || ''),
+      Array.isArray(b.itens) ? b.itens : []
+    );
+    res.json(resultado);
+  })
+);
+
 router.get(
   '/vendas/buscar',
   wrap(async (req, res) => {
@@ -373,13 +402,18 @@ router.delete(
     const ids = idsRes.rows.map((x) => Number(plainRow(x).id));
     if (ids.length > 0) {
       const ph = ids.map(() => '?').join(',');
-      await db.batch(
-        [
-          { sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids },
-          { sql: `DELETE FROM live_vendas WHERE id IN (${ph})`, args: ids },
-        ],
-        'write'
+      const itensRes = await db.execute({
+        sql: `SELECT id FROM live_vendas_itens WHERE venda_id IN (${ph})`,
+        args: ids,
+      });
+      // Venda não paga: devolve ao estoque o que foi baixado por estes itens.
+      const stmts = await gerarEstornosItens(
+        db,
+        itensRes.rows.map((x) => Number(plainRow(x).id))
       );
+      stmts.push({ sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids });
+      stmts.push({ sql: `DELETE FROM live_vendas WHERE id IN (${ph})`, args: ids });
+      await db.batch(stmts, 'write');
     }
     res.json({ ok: true, deleted: ids.length });
   })
@@ -393,13 +427,17 @@ router.delete(
     const ids = raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
     if (ids.length > 0) {
       const ph = ids.map(() => '?').join(',');
-      await db.batch(
-        [
-          { sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids },
-          { sql: `DELETE FROM live_vendas WHERE id IN (${ph})`, args: ids },
-        ],
-        'write'
+      const itensRes = await db.execute({
+        sql: `SELECT id FROM live_vendas_itens WHERE venda_id IN (${ph})`,
+        args: ids,
+      });
+      const stmts = await gerarEstornosItens(
+        db,
+        itensRes.rows.map((x) => Number(plainRow(x).id))
       );
+      stmts.push({ sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids });
+      stmts.push({ sql: `DELETE FROM live_vendas WHERE id IN (${ph})`, args: ids });
+      await db.batch(stmts, 'write');
     }
     res.json({ ok: true });
   })
@@ -419,7 +457,24 @@ router.post(
             VALUES (?, ?, ?, ?) RETURNING id`,
       args: [Number(b.venda_id), String(b.referencia), Number(b.preco), Number(b.quantidade)],
     });
-    res.json({ id: Number(plainRow(r.rows[0]).id) });
+    const id = Number(plainRow(r.rows[0]).id);
+
+    // Baixa na coluna estoque da tela Produtos — o trigger grava em
+    // produtos.estoque_atual sem tocar nos demais campos da tabela.
+    const vendaRes = await db.execute({
+      sql: 'SELECT data_live FROM live_vendas WHERE id = ?',
+      args: [Number(b.venda_id)],
+    });
+    const dataLive =
+      vendaRes.rows.length > 0 ? String(plainRow(vendaRes.rows[0]).data_live || '') : '';
+    await baixarEstoqueItem(db, {
+      itemId: id,
+      referencia: b.referencia,
+      quantidade: Number(b.quantidade),
+      descricao: dataLive ? `VENDA LIVE - ${dataLive}` : 'VENDA LIVE',
+    });
+
+    res.json({ id });
   })
 );
 
@@ -433,10 +488,29 @@ router.patch(
       res.status(400).json({ error: 'quantidade obrigatória' });
       return;
     }
+    // Lê a quantidade anterior para mover o estoque apenas pela diferença.
+    const anterior = await db.execute({
+      sql: 'SELECT referencia, quantidade FROM live_vendas_itens WHERE id = ?',
+      args: [id],
+    });
+    const nova = Number(b.quantidade);
     await db.execute({
       sql: 'UPDATE live_vendas_itens SET quantidade = ? WHERE id = ?',
-      args: [Number(b.quantidade), id],
+      args: [nova, id],
     });
+
+    if (anterior.rows.length > 0) {
+      const row = plainRow<{ referencia: string; quantidade: number }>(anterior.rows[0]);
+      const delta = nova - Number(row.quantidade);
+      if (delta !== 0) {
+        await movimentarEstoqueItem(db, {
+          itemId: id,
+          referencia: row.referencia,
+          delta,
+          descricao: 'Ajuste de item de venda',
+        });
+      }
+    }
     res.json({ ok: true });
   })
 );
@@ -450,7 +524,16 @@ router.delete(
     const ids = raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
     if (ids.length > 0) {
       const ph = ids.map(() => '?').join(',');
-      await db.execute({ sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids });
+      const itensRes = await db.execute({
+        sql: `SELECT id FROM live_vendas_itens WHERE venda_id IN (${ph})`,
+        args: ids,
+      });
+      const stmts = await gerarEstornosItens(
+        db,
+        itensRes.rows.map((x) => Number(plainRow(x).id))
+      );
+      stmts.push({ sql: `DELETE FROM live_vendas_itens WHERE venda_id IN (${ph})`, args: ids });
+      await db.batch(stmts, 'write');
     }
     res.json({ ok: true });
   })
@@ -461,7 +544,9 @@ router.delete(
   wrap(async (req, res) => {
     const db = getDb();
     const id = Number(req.params.id);
-    await db.execute({ sql: 'DELETE FROM live_vendas_itens WHERE id = ?', args: [id] });
+    const stmts = await gerarEstornosItens(db, [id]);
+    stmts.push({ sql: 'DELETE FROM live_vendas_itens WHERE id = ?', args: [id] });
+    await db.batch(stmts, 'write');
     res.json({ ok: true });
   })
 );
@@ -474,7 +559,9 @@ router.delete(
     const ids = raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
     if (ids.length > 0) {
       const ph = ids.map(() => '?').join(',');
-      await db.execute({ sql: `DELETE FROM live_vendas_itens WHERE id IN (${ph})`, args: ids });
+      const stmts = await gerarEstornosItens(db, ids);
+      stmts.push({ sql: `DELETE FROM live_vendas_itens WHERE id IN (${ph})`, args: ids });
+      await db.batch(stmts, 'write');
     }
     res.json({ ok: true });
   })
@@ -675,6 +762,26 @@ router.post(
       await db.batch(stmts.slice(i, i + 200), 'write');
     }
     res.json({ ok: true, count: rows.length });
+  })
+);
+
+// Importação de catálogo CSV (referencia, descricao, quantidade, valor_unitario).
+// Toda a gravação acontece em uma única transação (batch) no libsql.
+router.post(
+  '/produtos/importar',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const body = req.body || {};
+    const mode: ProductImportMode = modoImportacaoValido(body.mode) ? body.mode : 'cadastro';
+
+    const validado = validarLinhasImportacao(body.rows);
+    if ('error' in validado) {
+      res.status(400).json({ error: validado.error });
+      return;
+    }
+
+    const resultado = await executarImportacao(db, validado.rows, mode);
+    res.json({ ok: true, mode, ...resultado });
   })
 );
 
@@ -946,15 +1053,16 @@ router.delete(
   '/tudo',
   wrap(async (_req, res) => {
     const db = getDb();
-    await db.batch(
-      [
-        { sql: 'DELETE FROM live_vendas_itens', args: [] },
-        { sql: 'DELETE FROM live_vendas', args: [] },
-        { sql: 'DELETE FROM live_historico', args: [] },
-        { sql: 'DELETE FROM lives', args: [] },
-      ],
-      'write'
+    const itensRes = await db.execute({ sql: 'SELECT id FROM live_vendas_itens', args: [] });
+    const stmts = await gerarEstornosItens(
+      db,
+      itensRes.rows.map((x) => Number(plainRow(x).id))
     );
+    stmts.push({ sql: 'DELETE FROM live_vendas_itens', args: [] });
+    stmts.push({ sql: 'DELETE FROM live_vendas', args: [] });
+    stmts.push({ sql: 'DELETE FROM live_historico', args: [] });
+    stmts.push({ sql: 'DELETE FROM lives', args: [] });
+    await db.batch(stmts, 'write');
     res.json({ ok: true });
   })
 );

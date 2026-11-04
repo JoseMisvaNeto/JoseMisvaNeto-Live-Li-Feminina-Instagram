@@ -9,6 +9,7 @@
     "start": "node server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
     "db:init": "tsx scripts/init-db.ts",
     "db:migrate": "tsx scripts/migrate.ts"
   },

@@ -1,4 +1,5 @@
 import Papa from 'papaparse';
+import { parseValorUnitarioBr } from './productCsvImport';
 
 export interface InstagramProfile {
   id?: number;
@@ -152,12 +153,8 @@ export const processProductsCSV = async (file: File): Promise<{ products: any[],
   if (firstLine.includes(';')) delimiter = ';';
   else if (firstLine.includes('\t')) delimiter = '\t';
 
-  const parseCurrency = (val: string): number => {
-    if (!val) return 0;
-    const cleaned = val.toString().replace(/R\$/g, '').replace(/,/g, '.').replace(/\s/g, '');
-    const parsed = parseFloat(cleaned);
-    return isNaN(parsed) || !isFinite(parsed) ? 0 : parsed;
-  };
+  // Reaproveita o parser brasileiro robusto (aceita "12,50", "1.234,56", "R$ 12,50").
+  const parseCurrency = (val: string): number => parseValorUnitarioBr(val).valor ?? 0;
 
   const parsePercentage = (val: string): number => {
     if (!val) return 0;
@@ -191,7 +188,7 @@ export const processProductsCSV = async (file: File): Promise<{ products: any[],
         // Find best matching columns based on common names
         const refKey = fields.find(f => /^(ref|referencia|ref\.|id)$/i.test(f.trim()));
         const descKey = fields.find(f => /^(descricao|descrição|produto|nome)$/i.test(f.trim()));
-        const precoKey = fields.find(f => /^(preco_venda|preco|preço|valor|venda)$/i.test(f.trim()));
+        const precoKey = fields.find(f => /^(preco_venda|preco|preço|valor|venda|valor_unitario|valor unitario|valor unit|preco venda|preço de venda|valor de venda)$/i.test(f.trim()));
         const estoqueKey = fields.find(f => /^(estoque_atual|estoque|quantidade|qtd)$/i.test(f.trim()));
         const fornecedorKey = fields.find(f => /^(fornecedor|marca)$/i.test(f.trim()));
         const custoKey = fields.find(f => /^(custo|valor de custo|preço de custo)$/i.test(f.trim()));

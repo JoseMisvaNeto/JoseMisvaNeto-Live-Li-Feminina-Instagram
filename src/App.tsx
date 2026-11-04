@@ -1842,45 +1842,31 @@ export default function App() {
         }
       }
 
-      // 3. Se for FINALIZAR: Registrar Movimentações (A Trigger fará o resto)
+      // 3. Se for FINALIZAR: liquidar o estoque da live
+      // A baixa já acontece item a item quando o produto é lançado no Acerto
+      // (POST /itens). Aqui o servidor só completa o que faltar (vendas antigas)
+      // e desvincula as movimentações para a limpeza abaixo não estornar
+      // uma venda que foi paga.
       if (action === 'finalizar') {
         try {
-          // 1. Agrupar itens da lista atual (Purchases) APENAS das sacolas que foram pagas (targetCustomerIds)
-          const stockToDeduct = new Map<string, number>();
-          const targetIdsNum = targetCustomerIds.map(Number);
-          
-          for (const p of purchases) {
-            if (!targetIdsNum.includes(Number(p.customerId))) continue; // Ignora se a compra não for de uma sacola paga
-            const ref = p.reference.trim().toUpperCase();
-            const qty = Math.abs(Number(p.quantity));
-            stockToDeduct.set(ref, (stockToDeduct.get(ref) || 0) + qty);
-          }
+          // O ajuste de estoque não pode impedir o fechamento da live.
+          try {
+            const targetIdsNum = targetCustomerIds.map(Number);
+            const itensPagos = purchases
+              .filter((p) => targetIdsNum.includes(Number(p.customerId)))
+              .map((p) => ({
+                id: p.id,
+                referencia: p.reference,
+                quantidade: Math.abs(Number(p.quantity)) || 0,
+              }));
 
-          if (stockToDeduct.size > 0) {
-            let processedCount = 0;
-
-            for (const [ref, qty] of stockToDeduct.entries()) {
-              // Buscar apenas o ID do produto
-              const { id: produtoId } = await api.getProdutoByRef(ref);
-                
-              if (produtoId) {
-                // APENAS INSERIR NA MOVIMENTAÇÃO
-                // A Trigger no banco de dados atualizará o saldo automaticamente
-                try {
-                  await api.insertMovimentacao({
-                    produto_id: produtoId,
-                    tipo: 'SAÍDA',
-                    quantidade: qty,
-                    descricao: `VENDA LIVE - ${dataLive}`,
-                    data: new Date().toISOString()
-                  });
-                  processedCount++;
-                } catch (mError) {
-                  console.error('Erro ao registrar movimentação:', mError);
-                }
-              }
-            }
-            console.log(`${processedCount} movimentações registradas. O banco de dados atualizou os saldos via Trigger.`);
+            const resultado = await api.liquidarEstoqueLive(dataLive, itensPagos);
+            console.log(
+              `Estoque da live liquidado: ${resultado.itens} item(ns), ${resultado.ajustes} ajuste(s).`
+            );
+          } catch (mError) {
+            console.error('Erro ao liquidar estoque da live:', mError);
+            showToast('Aviso: não foi possível ajustar o estoque da live.');
           }
 
           // 2. Limpar tabelas de trabalho no banco
@@ -1925,7 +1911,7 @@ export default function App() {
             setDeliveredIds([]);
             removeLiveLsKeys(dataLive);
             setLiveConfig({ isActive: false, date: new Date().toISOString().split('T')[0] });
-            showToast('Acerto finalizado com sucesso! Estoque atualizado via Trigger.');
+            showToast('Acerto finalizado com sucesso! Estoque atualizado.');
           }
           
         } catch (err) {

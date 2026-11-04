@@ -55,6 +55,25 @@ export interface HistoricoRow {
   created_at?: string;
 }
 
+export type ProdutoImportMode = 'cadastro' | 'somar' | 'substituir';
+
+export interface ProdutoImportInput {
+  referencia: string;
+  descricao: string;
+  quantidade: number;
+  valor_unitario: number;
+}
+
+export interface ProdutoImportResult {
+  ok: boolean;
+  mode: ProdutoImportMode;
+  criados: number;
+  atualizados: number;
+  unidades: number;
+  movimentacoes: number;
+  lote: string;
+}
+
 export interface ProdutoRow {
   id: string;
   referencia: string;
@@ -124,6 +143,13 @@ export const api = {
   deleteVendasByIds: (ids: number[]) =>
     request<{ ok: boolean }>(`/vendas/ids?ids=${ids.join(',')}`, { method: 'DELETE' }),
 
+  // Baixa pendente do estoque no fechamento da live (vendas pagas)
+  liquidarEstoqueLive: (dataLive: string, itens: { id: number | string; referencia: string; quantidade: number }[]) =>
+    request<{ itens: number; ajustes: number }>('/vendas/estoque-final', {
+      method: 'POST',
+      body: JSON.stringify({ data_live: dataLive, itens }),
+    }),
+
   // ---- ITENS ----
   insertItem: (fields: { venda_id: number; referencia: string; preco: number; quantidade: number }) =>
     request<{ id: number }>('/itens', { method: 'POST', body: JSON.stringify(fields) }),
@@ -187,6 +213,12 @@ export const api = {
 
   upsertProdutos: (rows: Partial<ProdutoRow>[]) =>
     request<{ ok: boolean; count: number }>('/produtos/upsert', { method: 'POST', body: JSON.stringify(rows) }),
+
+  importarProdutosCSV: (rows: ProdutoImportInput[], mode: ProdutoImportMode) =>
+    request<ProdutoImportResult>('/produtos/importar', {
+      method: 'POST',
+      body: JSON.stringify({ rows, mode }),
+    }),
 
   // ---- MOVIMENTAÇÕES ----
   insertMovimentacao: (m: { produto_id: string; tipo: string; quantidade: number; descricao?: string; data?: string }) =>

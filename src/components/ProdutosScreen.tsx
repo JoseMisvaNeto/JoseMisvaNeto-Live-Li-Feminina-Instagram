@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api, type ProdutoRow } from '../lib/api';
 import { processProductsCSV, downloadProductsCSV } from '../utils/csvProcessor';
+import ProdutosCsvImportModal from './ProdutosCsvImportModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -20,6 +21,7 @@ import {
   Boxes,
   TrendingUp,
   PackageX,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) {
@@ -92,6 +94,7 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
   const [importSummary, setImportSummary] = useState<{ products: any[]; warnings: string[]; filename: string } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isCsvImportOpen, setIsCsvImportOpen] = useState(false);
 
   const loadProdutos = async () => {
     setIsLoading(true);
@@ -305,6 +308,14 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
           />
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setIsCsvImportOpen(true)}
+            title="Importar produtos CSV (referência, descrição, quantidade, valor unitário)"
+            className="flex items-center gap-2 px-3 py-2 bg-[#58a6ff]/10 text-[#58a6ff] border border-[#58a6ff]/30 rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-[#58a6ff]/20 transition-colors"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Importar produtos CSV</span>
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -315,6 +326,7 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isImporting}
+            title="Importar planilha completa (custo, fornecedor, lucro...)"
             className="flex items-center gap-2 px-3 py-2 bg-white/5 text-white/60 border border-white/10 rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-white/10 hover:text-white transition-colors disabled:opacity-50"
           >
             <Upload className="w-3.5 h-3.5" />
@@ -695,6 +707,14 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
           </motion.div>
         )}
       </AnimatePresence>
+
+      <ProdutosCsvImportModal
+        open={isCsvImportOpen}
+        produtos={produtos}
+        showToast={showToast}
+        onClose={() => setIsCsvImportOpen(false)}
+        onImported={loadProdutos}
+      />
     </div>
   );
 }
