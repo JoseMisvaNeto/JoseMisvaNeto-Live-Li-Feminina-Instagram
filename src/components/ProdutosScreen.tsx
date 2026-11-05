@@ -20,7 +20,6 @@ import {
   DollarSign,
   Boxes,
   TrendingUp,
-  PackageX,
   FileSpreadsheet,
 } from 'lucide-react';
 
@@ -124,8 +123,7 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
     const unidades = produtos.reduce((acc, p) => acc + (Number(p.estoque_atual) || 0), 0);
     const valorCusto = produtos.reduce((acc, p) => acc + (Number(p.estoque_atual) || 0) * (Number(p.custo) || 0), 0);
     const valorVenda = produtos.reduce((acc, p) => acc + (Number(p.estoque_atual) || 0) * (Number(p.preco_venda) || 0), 0);
-    const abaixoMinimo = produtos.filter((p) => (Number(p.estoque_atual) || 0) <= (Number(p.estoque_minimo) || 5)).length;
-    return { totalSkus, unidades, valorCusto, valorVenda, abaixoMinimo };
+    return { totalSkus, unidades, valorCusto, valorVenda };
   }, [produtos]);
 
   // Preview de lucro enquanto digita
@@ -279,20 +277,6 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
           </div>
           <div className="text-2xl font-black text-[#ccff00]">{brl(dashboard.valorVenda)}</div>
         </div>
-        <div className={cn(
-          "p-3 rounded-lg border",
-          dashboard.abaixoMinimo > 0
-            ? "bg-yellow-500/10 border-yellow-500/30"
-            : "bg-[#111] border-[#ccff00]/20"
-        )}>
-          <div className={cn("flex items-center gap-2 mb-1", dashboard.abaixoMinimo > 0 ? "text-yellow-500" : "text-[#ccff00]/60")}>
-            <PackageX className="w-3.5 h-3.5" />
-            <span className="text-[10px] font-black uppercase tracking-widest">Abaixo do Mínimo</span>
-          </div>
-          <div className={cn("text-2xl font-black", dashboard.abaixoMinimo > 0 ? "text-yellow-500" : "text-white")}>
-            {dashboard.abaixoMinimo}
-          </div>
-        </div>
       </div>
 
       {/* Barra de ações */}
@@ -383,17 +367,12 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
               )}
               {!isLoading && filtered.map((p) => {
                 const estoque = Number(p.estoque_atual) || 0;
-                const minimo = Number(p.estoque_minimo) || 5;
-                const baixo = estoque <= minimo;
                 return (
                   <tr key={p.id} className="border-b border-white/5 hover:bg-[#ccff00]/5 transition-colors">
                     <td className="px-3 py-2 font-black text-[#ccff00] whitespace-nowrap">{p.referencia}</td>
                     <td className="px-3 py-2 text-white/80 max-w-[260px] truncate" title={p.descricao}>{p.descricao}</td>
                     <td className="px-3 py-2 text-right font-bold text-white whitespace-nowrap">{brl(p.preco_venda)}</td>
-                    <td className={cn("px-3 py-2 text-right font-black whitespace-nowrap", baixo ? "text-red-500" : "text-white")}>
-                      {estoque}
-                      {baixo && <span className="ml-1 text-[9px] uppercase">▼ mín {minimo}</span>}
-                    </td>
+                    <td className="px-3 py-2 text-right font-black text-white whitespace-nowrap">{estoque}</td>
                     <td className="px-3 py-2 text-right text-white/60 whitespace-nowrap hidden md:table-cell">{brl(p.custo)}</td>
                     <td className={cn("px-3 py-2 text-right font-bold whitespace-nowrap hidden md:table-cell", (Number(p.lucro) || 0) >= 0 ? "text-emerald-400" : "text-red-500")}>
                       {brl(p.lucro)}

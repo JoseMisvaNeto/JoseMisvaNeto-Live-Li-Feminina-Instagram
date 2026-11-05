@@ -265,3 +265,44 @@ test('baixarEstoqueItem ignora quantidade zero e referência vazia', async () =>
   assert.equal(await baixarEstoqueItem(db, { itemId: 1, referencia: '   ', quantidade: 5 }), false);
   assert.equal(await estoqueDe('T160'), 10);
 });
+
+// Reproduz, com os dados que a tela lê (GET /produtos), os cálculos do
+// dashboard: SKUs, Unidades, Valor a Custo e Potencial de Venda.
+async function lerDashboard() {
+  const { body } = await req('/produtos');
+  const produtos = body as Record<string, any>[];
+  return {
+    totalSkus: produtos.length,
+    unidades: produtos.reduce((a, p) => a + (Number(p.estoque_atual) || 0), 0),
+    valorCusto: produtos.reduce((a, p) => a + (Number(p.estoque_atual) || 0) * (Number(p.custo) || 0), 0),
+    valorVenda: produtos.reduce((a, p) => a + (Number(p.estoque_atual) || 0) * (Number(p.preco_venda) || 0), 0),
+  };
+}
+
+const igual = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-6, `esperava ${b}, veio ${a}`);
+
+test('dashboard reflete a saída ao vender e a entrada ao remover o item', async () => {
+  await criarProduto('T200', 10); // custo 5, venda 12,50
+  await criarProduto('T201', 4);
+  const vendaId = await criarVenda(910008, '2026-11-11');
+
+  const antes = await lerDashboard();
+
+  // SAÍDA: venda de 3 unidades no Acerto
+  const criado = await req(
+    '/itens',
+    json('POST', { venda_id: vendaId, referencia: 'T200', preco: 12.5, quantidade: 3 })
+  );
+  const aposVenda = await lerDashboard();
+  igual(aposVenda.totalSkus, antes.totalSkus);
+  igual(aposVenda.unidades, antes.unidades - 3);
+  igual(aposVenda.valorVenda, antes.valorVenda - 3 * 12.5);
+  igual(aposVenda.valorCusto, antes.valorCusto - 3 * 5);
+  assert.equal(await estoqueDe('T200'), 7);
+
+  // ENTRADA: remover o item devolve a mercadoria ao estoque
+  await req(`/itens/${criado.body.id}`, { method: 'DELETE' });
+  const aposRemocao = await lerDashboard();
+  assert.deepEqual(aposRemocao, antes, 'todos os valores do dashboard voltam ao original');
+  assert.equal(await estoqueDe('T200'), 10);
+});
