@@ -718,10 +718,19 @@ router.get(
     const db = getDb();
     const ref = String(req.params.ref || '').trim().toUpperCase();
     const r = await db.execute({
-      sql: 'SELECT id FROM produtos WHERE referencia = ? LIMIT 1',
+      sql: 'SELECT id, descricao, preco_venda FROM produtos WHERE referencia = ? LIMIT 1',
       args: [ref],
     });
-    res.json({ id: r.rows.length > 0 ? String(plainRow(r.rows[0]).id) : null });
+    if (r.rows.length === 0) {
+      res.json({ id: null, descricao: null, preco_venda: null });
+      return;
+    }
+    const row = plainRow<{ id: number | string; descricao: string | null; preco_venda: number | null }>(r.rows[0]);
+    res.json({
+      id: String(row.id),
+      descricao: row.descricao ?? null,
+      preco_venda: row.preco_venda ?? null,
+    });
   })
 );
 

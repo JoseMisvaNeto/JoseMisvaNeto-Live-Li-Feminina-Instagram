@@ -299,13 +299,82 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => window.innerWidth < 768 ? 'sacolas' : 'live');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [confirmQty, setConfirmQty] = useState(1);
+
+  // ---- Lançamento rápido dentro do modal da Live (espela a tela Acerto) ----
+  const [modalRef, setModalRef] = useState('');
+  const [modalPrice, setModalPrice] = useState('');
+  const [modalQty, setModalQty] = useState('1');
+  const [modalHint, setModalHint] = useState<{ descricao: string | null; preco: number | null } | null>(null);
+  const modalRefInput = useRef<HTMLInputElement | null>(null);
+  const modalPriceInput = useRef<HTMLInputElement | null>(null);
+  const modalQtyInput = useRef<HTMLInputElement | null>(null);
+  const autoPriceRef = useRef<string | null>(null); // último preço preenchido automaticamente
+  // Espelhos síncronos dos campos (o updater do setState pode rodar 2x no StrictMode)
+  const modalRefValueRef = useRef('');
+  const modalPriceValueRef = useRef('');
+  // Quando o operador aprova o alerta "não está no estoque", pula a revalidação
+  // (o estado validatedRefs só será visto no próximo render)
+  const bypassRefValidationRef = useRef(false);
 
   useEffect(() => {
     if (selectedCustomer) {
-      setConfirmQty(1);
+      setModalRef('');
+      setModalPrice('');
+      setModalQty('1');
+      setModalHint(null);
+      autoPriceRef.current = null;
+      modalRefValueRef.current = '';
+      modalPriceValueRef.current = '';
+      // Foco imediato em Referência — a live é ao vivo, não pode perder 1 segundo.
+      // "Novo Cliente" mantém o foco no campo de nome (autoFocus dele).
+      if (!selectedCustomer.bloqueada && selectedCustomer.nome_completo !== 'Novo Cliente') {
+        const t = setTimeout(() => modalRefInput.current?.focus(), 80);
+        return () => clearTimeout(t);
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomer]);
+
+  // Dica de referência: busca com debounce para descrever o produto e
+  // pré-preencher o Preço UN. (nunca sobrescreve um preço digitado à mão).
+  useEffect(() => {
+    const ref = modalRef.trim().toUpperCase();
+    if (!ref) {
+      setModalHint(null);
+      // Referência apagada: limpa o preço só se ele ainda for o automático
+      if (autoPriceRef.current !== null && modalPriceValueRef.current === autoPriceRef.current) {
+        autoPriceRef.current = null;
+        modalPriceValueRef.current = '';
+        setModalPrice('');
+      }
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const p = await api.getProdutoByRef(ref);
+        // O operador já digitou outra referência durante a busca: descarta
+        if (modalRefValueRef.current.trim().toUpperCase() !== ref) return;
+        if (p.id) {
+          setModalHint({ descricao: p.descricao, preco: p.preco_venda });
+          if (p.preco_venda != null) {
+            const precoTxt = String(p.preco_venda);
+            const atual = modalPriceValueRef.current;
+            if (atual === '' || atual === autoPriceRef.current) {
+              autoPriceRef.current = precoTxt;
+              modalPriceValueRef.current = precoTxt;
+              setModalPrice(precoTxt);
+            }
+          }
+        } else {
+          setModalHint(null);
+        }
+      } catch {
+        // silencioso: a validação formal acontece no Enter/click
+      }
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modalRef]);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const customersRef = useRef(customers);
@@ -394,6 +463,27 @@ export default function App() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
+
+  // ---- Mínimo de compra da live (padrão R$ 100, ajustável) ----
+  const [minimoCompra, setMinimoCompra] = useState<number>(() => {
+    const v = localStorage.getItem('minimoCompraLive');
+    const n = v ? Number(v) : NaN;
+    return Number.isFinite(n) && n >= 0 ? n : 100;
+  });
+  const [editandoMinimo, setEditandoMinimo] = useState(false);
+  const [minimoDraft, setMinimoDraft] = useState('');
+
+  const salvarMinimo = () => {
+    const n = parseFloat(minimoDraft.trim().replace(',', '.'));
+    if (!Number.isFinite(n) || n < 0) {
+      showToast('⚠️ Valor inválido para o mínimo de compra');
+      return;
+    }
+    setMinimoCompra(n);
+    localStorage.setItem('minimoCompraLive', String(n));
+    setEditandoMinimo(false);
+    showToast(`✅ Mínimo de compra: R$ ${n.toFixed(2).replace('.', ',')}`);
+  };
   const [focusQueue, setFocusQueue] = useState<GroupedPurchase[]>([]);
   
   // Danger Zone State
@@ -429,7 +519,7 @@ export default function App() {
   const [showRecentPurchases, setShowRecentPurchases] = useState(false);
   const [deletePurchaseModal, setDeletePurchaseModal] = useState<{ visible: boolean, purchase: Purchase | null }>({ visible: false, purchase: null });
   const [validatedRefs, setValidatedRefs] = useState<Set<string>>(new Set());
-  const [pendingRefValidation, setPendingRefValidation] = useState<{ref: string, action: 'focus_price' | 'submit'} | null>(null);
+  const [pendingRefValidation, setPendingRefValidation] = useState<{ref: string, action: 'focus_price' | 'submit' | 'modal_price' | 'modal_submit'} | null>(null);
   const [purchases, setPurchases] = useState<Purchase[]>(() => {
     const parsed = readLiveLs<Purchase[]>('purchases', [], INITIAL_LIVE_DATE);
     if (Array.isArray(parsed)) {
@@ -1105,102 +1195,202 @@ export default function App() {
 
   const [isConfirmingPurchase, setIsConfirmingPurchase] = useState(false);
 
+  // "Quanto já comprou na live": R$ dos itens lançados + peças declaradas (qtd_live)
+  // e quanto falta para o mínimo de compra configurado
+  const modalLiveTotal = useMemo(() => {
+    if (!selectedCustomer) return { total: 0, pecas: 0, restante: 0 };
+    const cid = Number(selectedCustomer.id);
+    const total = purchases
+      .filter((p) => Number(p.customerId) === cid)
+      .reduce((acc, p) => acc + p.value * p.quantity, 0);
+    const pecas = shoppingList.find((c) => Number(c.id) === cid)?.purchaseCount || 0;
+    const restante = minimoCompra > 0 ? Math.max(0, minimoCompra - total) : 0;
+    return { total, pecas, restante };
+  }, [purchases, shoppingList, selectedCustomer, minimoCompra]);
+
   const confirmPurchase = useCallback(async () => {
-    if (selectedCustomer && !isConfirmingPurchase) {
-      setIsConfirmingPurchase(true);
-      
-      try {
-        const finalName = (selectedCustomer.nome_completo === 'Novo Cliente' && editingName.trim()) 
-          ? editingName.trim() 
-          : selectedCustomer.nome_completo;
+    const skipRefCheck = bypassRefValidationRef.current;
+    bypassRefValidationRef.current = false;
+    if (!selectedCustomer || isConfirmingPurchase) return;
 
-        const customerCode = selectedCustomer.codigo_cliente;
-        const exists = shoppingListRef.current.find(c => String(c.id) === String(selectedCustomer.id));
-        const qtdLive = exists ? (exists.purchaseCount || 0) + confirmQty : confirmQty;
+    const refTrim = modalRef.trim().toUpperCase();
+    const priceStr = modalPrice.trim();
+    const priceNum = parseFloat(priceStr);
+    const hasPrice = priceStr !== '' && isFinite(priceNum) && priceNum > 0;
+    const qty = Math.max(1, parseInt(modalQty, 10) || 1);
 
-        // 1. Garante de forma síncrona que o cliente existe
-        await api.upsertClienteId({
-          id: Number(selectedCustomer.id),
-          username: selectedCustomer.username,
-          nome_completo: finalName,
-          codigo_cliente: customerCode
-        });
-
-        // 2. Garante de forma síncrona a venda
-        await api.upsertVenda({
-          cliente_id: Number(selectedCustomer.id),
-          data_live: liveConfig.date,
-          qtd_live: qtdLive,
-          pago: false,
-          status: 'pendente'
-        });
-
-        // ATUALIZAÇÃO LOCAL APÓS SUCESSO NO BANCO:
-        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        let updatedCustomer: Customer;
-        
-        if (exists) {
-          updatedCustomer = { 
-            ...exists, 
-            nome_completo: finalName,
-            purchaseCount: qtdLive, 
-            lastPurchaseTime: now 
-          };
-          shoppingListRef.current = shoppingListRef.current.map(c => 
-            String(c.id) === String(selectedCustomer.id) ? updatedCustomer : c
-          );
-        } else {
-          updatedCustomer = { 
-            ...selectedCustomer, 
-            nome_completo: finalName,
-            purchaseCount: qtdLive, 
-            lastPurchaseTime: now 
-          };
-          shoppingListRef.current = [updatedCustomer, ...shoppingListRef.current];
-        }
-        
-        setShoppingList(shoppingListRef.current);
-        setTimeline(prev => [updatedCustomer, ...prev].slice(0, 10));
-        
-        setCustomers(prev => {
-          const existingIndex = prev.findIndex(c => String(c.id) === String(selectedCustomer.id));
-          if (existingIndex >= 0) {
-            const newArray = [...prev];
-            newArray[existingIndex] = {
-              ...newArray[existingIndex],
-              nome_completo: finalName,
-              codigo_cliente: customerCode
-            };
-            return newArray;
-          } else {
-            return [...prev, {
-              id: Number(selectedCustomer.id),
-              username: selectedCustomer.username,
-              nome_completo: finalName,
-              codigo_cliente: customerCode
-            }].sort((a, b) => a.username.localeCompare(b.username));
-          }
-        });
-
-        // Limpa o modal
-        setSelectedCustomer(null);
-        setEditingName('');
-        
-      } catch (error: any) {
-        console.error('Erro bloqueante ao confirmar venda:', error);
-        const msg = error.message || 'Erro de conexão';
-        showToast(`⚠️ ERRO GRAVE: Venda NÃO registrada! Tente de novo. (${msg})`);
-      } finally {
-        setIsConfirmingPurchase(false);
-      }
+    // Sem Referência e sem Preço => comporta-se exatamente como antes (só qtd_live)
+    if (refTrim && !hasPrice) {
+      showToast('⚠️ Preencha o Preço UN. da mercadoria');
+      modalPriceInput.current?.focus();
+      modalPriceInput.current?.select();
+      return;
     }
-  }, [selectedCustomer, editingName, liveConfig, isConfirmingPurchase, confirmQty]);
+    if (!refTrim && priceStr) {
+      showToast('⚠️ Preencha a Referência (ou limpe o Preço UN.)');
+      modalRefInput.current?.focus();
+      modalRefInput.current?.select();
+      return;
+    }
+
+    setIsConfirmingPurchase(true);
+
+    try {
+      // Valida a referência no estoque — pode abrir o alerta "não está no estoque"
+      // (mesma lógica de validateRef, evitando dependência de função declarada abaixo)
+      if (refTrim && !skipRefCheck && !validatedRefs.has(refTrim)) {
+        try {
+          const { id } = await api.getProdutoByRef(refTrim);
+          if (!id) {
+            setPendingRefValidation({ ref: refTrim, action: 'modal_submit' });
+            return; // alerta abriu; confirmInvalidRefModal re chamará
+          }
+          setValidatedRefs(prev => new Set(prev).add(refTrim));
+        } catch (err) {
+          console.error('Erro validando referência:', err);
+        }
+      }
+
+      const finalName = (selectedCustomer.nome_completo === 'Novo Cliente' && editingName.trim()) 
+        ? editingName.trim() 
+        : selectedCustomer.nome_completo;
+
+      const customerCode = selectedCustomer.codigo_cliente;
+      const exists = shoppingListRef.current.find(c => String(c.id) === String(selectedCustomer.id));
+      const qtdLive = exists ? (exists.purchaseCount || 0) + qty : qty;
+
+      // 1. Garante de forma síncrona que o cliente existe
+      await api.upsertClienteId({
+        id: Number(selectedCustomer.id),
+        username: selectedCustomer.username,
+        nome_completo: finalName,
+        codigo_cliente: customerCode
+      });
+
+      // 2. Garante de forma síncrona a venda (com o contador de peças da live)
+      const { id: vendaId } = await api.upsertVenda({
+        cliente_id: Number(selectedCustomer.id),
+        data_live: liveConfig.date,
+        qtd_live: qtdLive,
+        pago: false,
+        status: 'pendente'
+      });
+
+      if (!vendaId) throw new Error('Falha ao registrar a venda');
+
+      // 3. Lançamento rápido: cria o item (dá baixa no estoque via trigger, como no Acerto)
+      if (refTrim) {
+        const { id: itemId } = await api.insertItem({
+          venda_id: vendaId,
+          referencia: refTrim,
+          preco: priceNum,
+          quantidade: qty,
+        });
+        if (!itemId) throw new Error('Falha ao registrar o item');
+
+        const newPurchase: Purchase = {
+          id: String(itemId),
+          venda_id: String(vendaId),
+          customerId: Number(selectedCustomer.id),
+          reference: refTrim,
+          value: priceNum,
+          quantity: qty,
+          paid: false,
+          timestamp: new Date(),
+        };
+        setPurchases(prev => {
+          const updated = [newPurchase, ...prev];
+          updated.sort((a, b) => {
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+            const validA = !isNaN(timeA) ? timeA : 0;
+            const validB = !isNaN(timeB) ? timeB : 0;
+            if (validB !== validA) return validB - validA;
+            const idA = Number(a.id) || 0;
+            const idB = Number(b.id) || 0;
+            return idB - idA;
+          });
+          return updated;
+        });
+        showToast(`✅ Lançado: ${qty}x ${refTrim} p/ ${finalName}`);
+      }
+
+      // ATUALIZAÇÃO LOCAL APÓS SUCESSO NO BANCO:
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      let updatedCustomer: Customer;
+      
+      if (exists) {
+        updatedCustomer = { 
+          ...exists, 
+          nome_completo: finalName,
+          purchaseCount: qtdLive, 
+          lastPurchaseTime: now 
+        };
+        shoppingListRef.current = shoppingListRef.current.map(c => 
+          String(c.id) === String(selectedCustomer.id) ? updatedCustomer : c
+        );
+      } else {
+        updatedCustomer = { 
+          ...selectedCustomer, 
+          nome_completo: finalName,
+          purchaseCount: qtdLive, 
+          lastPurchaseTime: now 
+        };
+        shoppingListRef.current = [updatedCustomer, ...shoppingListRef.current];
+      }
+      
+      setShoppingList(shoppingListRef.current);
+      setTimeline(prev => [updatedCustomer, ...prev].slice(0, 10));
+      
+      setCustomers(prev => {
+        const existingIndex = prev.findIndex(c => String(c.id) === String(selectedCustomer.id));
+        if (existingIndex >= 0) {
+          const newArray = [...prev];
+          newArray[existingIndex] = {
+            ...newArray[existingIndex],
+            nome_completo: finalName,
+            codigo_cliente: customerCode
+          };
+          return newArray;
+        } else {
+          return [...prev, {
+            id: Number(selectedCustomer.id),
+            username: selectedCustomer.username,
+            nome_completo: finalName,
+            codigo_cliente: customerCode
+          }].sort((a, b) => a.username.localeCompare(b.username));
+        }
+      });
+
+      // Limpa o modal
+      setSelectedCustomer(null);
+      setEditingName('');
+      
+    } catch (error: any) {
+      console.error('Erro bloqueante ao confirmar venda:', error);
+      const msg = error.message || 'Erro de conexão';
+      showToast(`⚠️ ERRO GRAVE: Venda NÃO registrada! Tente de novo. (${msg})`);
+    } finally {
+      setIsConfirmingPurchase(false);
+    }
+  }, [selectedCustomer, editingName, liveConfig, isConfirmingPurchase, modalRef, modalPrice, modalQty, validatedRefs]);
 
   // Keyboard shortcuts for the identification modal
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (selectedCustomer) {
+        // Enquanto o alerta de referência estiver aberto, ele próprio cuida do teclado
+        if (pendingRefValidation) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelInvalidRefModal();
+          }
+          return;
+        }
         if (e.key === 'Enter') {
+          // Campos do modal cuidam do próprio Enter (encadeia Ref → Preço → QTD)
+          const target = e.target as HTMLElement | null;
+          if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
           e.preventDefault();
           if (selectedCustomer.bloqueada) {
             setSelectedCustomer(null);
@@ -1217,10 +1407,10 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedCustomer, confirmPurchase]);
+  }, [selectedCustomer, confirmPurchase, pendingRefValidation]);
 
   // Acerto Handlers
-  const validateRef = async (ref: string, actionCallback: 'focus_price' | 'submit') => {
+  const validateRef = async (ref: string, actionCallback: 'focus_price' | 'submit' | 'modal_price' | 'modal_submit') => {
     if (!ref || !ref.trim()) {
       return false;
     }
@@ -1363,16 +1553,30 @@ export default function App() {
         valueInput.current?.focus();
         valueInput.current?.select();
       }, 150);
+    } else if (action === 'modal_price') {
+      setTimeout(() => {
+        modalPriceInput.current?.focus();
+        modalPriceInput.current?.select();
+      }, 150);
     } else if (action === 'submit') {
       executeAcertoSubmit();
+    } else if (action === 'modal_submit') {
+      bypassRefValidationRef.current = true;
+      confirmPurchase();
     }
   };
 
   const cancelInvalidRefModal = () => {
+    const action = pendingRefValidation?.action;
     setPendingRefValidation(null);
     setTimeout(() => {
-      refInput.current?.focus();
-      refInput.current?.select();
+      if (action === 'modal_price' || action === 'modal_submit') {
+        modalRefInput.current?.focus();
+        modalRefInput.current?.select();
+      } else {
+        refInput.current?.focus();
+        refInput.current?.select();
+      }
     }, 150);
   };
 
@@ -2540,6 +2744,59 @@ export default function App() {
                   <div className="flex items-center gap-3 border-l-4 border-[#ccff00] pl-4 mb-2">
                     <ShoppingBag className="text-[#ccff00] w-5 h-5" />
                     <h2 className="text-xl font-black tracking-tight uppercase">Lista de Compras</h2>
+                    {/* Ajuste do mínimo de compra da live (fora do modal) */}
+                    <div className="ml-auto">
+                      {editandoMinimo ? (
+                        <form
+                          onSubmit={(e) => { e.preventDefault(); salvarMinimo(); }}
+                          className="flex items-center gap-1.5"
+                        >
+                          <span className="text-[10px] font-mono uppercase tracking-widest text-[#ccff00]/60">Mín. R$</span>
+                          <input
+                            autoFocus
+                            type="text"
+                            inputMode="decimal"
+                            value={minimoDraft}
+                            onChange={(e) => setMinimoDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setEditandoMinimo(false);
+                              }
+                            }}
+                            className="w-24 bg-[#1a1a1a] border border-[#ccff00]/50 focus:border-[#ccff00] rounded-lg px-2 py-1 text-sm font-black text-[#ccff00] outline-none text-center"
+                          />
+                          <button
+                            type="submit"
+                            title="Salvar mínimo"
+                            className="w-7 h-7 bg-[#ccff00] text-black rounded-lg flex items-center justify-center hover:shadow-[0_0_15px_rgba(204,255,0,0.4)] transition-all"
+                          >
+                            <Check className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Cancelar"
+                            onClick={() => setEditandoMinimo(false)}
+                            className="w-7 h-7 bg-white/5 text-white/50 rounded-lg flex items-center justify-center hover:bg-white/10 hover:text-white transition-all border border-white/10"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </form>
+                      ) : (
+                        <button
+                          type="button"
+                          title="Ajustar o mínimo de compra da live"
+                          onClick={() => {
+                            setMinimoDraft(String(minimoCompra).replace('.', ','));
+                            setEditandoMinimo(true);
+                          }}
+                          className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border border-[#ccff00]/30 bg-[#ccff00]/10 text-[#ccff00] hover:bg-[#ccff00]/20 hover:border-[#ccff00]/60 transition-all"
+                        >
+                          Mín. R$ {minimoCompra.toFixed(2).replace('.', ',')}
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="space-y-1 max-w-[70%]">
@@ -3013,6 +3270,7 @@ export default function App() {
                         <th className="px-2 py-1 w-24 text-center">REF</th>
                         <th className="px-2 py-1 w-16 text-center">MSG</th>
                         <th className="px-2 py-1 w-28 text-center">PAGO</th>
+                        <th className="px-2 py-1 w-20 text-right">FALTA</th>
                         <th className="px-2 py-1 w-24 text-right">TOTAL</th>
                       </tr>
                     </thead>
@@ -3243,6 +3501,16 @@ export default function App() {
                               </span>
                             </button>
                           </td>
+                          {/* Discreto: quanto falta p/ o mínimo de compra da live (coluna própria) */}
+                          <td className="px-2 py-0.5 text-right whitespace-nowrap">
+                            {minimoCompra > 0 && group.total < minimoCompra ? (
+                              <span className="text-[9.6px] font-mono font-bold text-orange-500/60">
+                                {(minimoCompra - group.total).toFixed(2)}
+                              </span>
+                            ) : (
+                              <span className="text-[9.6px] font-mono text-white/10">—</span>
+                            )}
+                          </td>
                           <td className="px-2 py-0.5 text-right">
                             <span className="font-black text-[#ccff00] text-xs">
                               R$ {group.total.toFixed(2)}
@@ -3252,7 +3520,7 @@ export default function App() {
                       ))}
                       {filteredGroups.length === 0 && (
                         <tr>
-                          <td colSpan={7} className="p-6 text-center text-white/20 font-mono italic text-xs">
+                          <td colSpan={8} className="p-6 text-center text-white/20 font-mono italic text-xs">
                             Nenhum lançamento encontrado para esta busca.
                           </td>
                         </tr>
@@ -3909,6 +4177,17 @@ export default function App() {
                                setEditingName(defaultName);
                            }
                         }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (selectedCustomer.bloqueada) {
+                              setSelectedCustomer(null);
+                              showToast('⚠️ Cliente bloqueada. Ação cancelada.');
+                            } else {
+                              modalRefInput.current?.focus();
+                            }
+                          }
+                        }}
                         className="w-full px-3 py-1.5 bg-black/50 border border-[#ccff00]/30 rounded-xl text-white placeholder-white/20 focus:border-[#ccff00] focus:ring-1 focus:ring-[#ccff00] outline-none text-center text-sm font-bold"
                         autoFocus
                       />
@@ -3922,48 +4201,129 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Quanto já comprou na live (itens lançados + peças declaradas) + falta p/ o mínimo */}
+              <div className="text-[16px] font-mono uppercase tracking-wide text-white/50 bg-white/5 border border-white/10 rounded-lg px-3 py-2 max-w-md mx-auto">
+                <div>
+                  Total na live:{' '}
+                  <span className="text-[#ccff00] font-black">
+                    R$ {modalLiveTotal.total.toFixed(2).replace('.', ',')}
+                  </span>
+                  <span className="text-white/40"> · {modalLiveTotal.pecas} peças</span>
+                </div>
+                {minimoCompra > 0 && (
+                  <div className={cn(
+                    "mt-0.5 font-black",
+                    modalLiveTotal.restante > 0 ? "text-amber-400" : "text-[#ccff00]"
+                  )}>
+                    {modalLiveTotal.restante > 0 ? (
+                      <>
+                        Faltam <span className="underline decoration-dotted">R$ {modalLiveTotal.restante.toFixed(2).replace('.', ',')}</span>{' '}
+                        p/ mínimo de R$ {minimoCompra.toFixed(2).replace('.', ',')}
+                      </>
+                    ) : (
+                      <span>✓ Mínimo atingido</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Lançamento rápido: Referência → Preço UN. → QTD (Tab/Enter encadeia) */}
               {!selectedCustomer.bloqueada && (
-                <div className="flex flex-col items-center gap-1.5 py-3 bg-white/5 border border-white/5 rounded-xl px-4 max-w-xs mx-auto">
-                  <div className="text-[13px] font-black text-[#ccff00]/60 uppercase tracking-[0.15em] font-mono">
-                    Quantidade de peças
+                <div className="max-w-md mx-auto space-y-1.5">
+                  <div className="grid grid-cols-3 gap-2 text-left">
+                    <div className="space-y-0.5">
+                      <label className="text-[11px] font-mono text-[#ccff00]/60 uppercase tracking-widest">Referência</label>
+                      <input
+                        ref={modalRefInput}
+                        type="text"
+                        value={modalRef}
+                        onChange={(e) => {
+                          modalRefValueRef.current = e.target.value;
+                          setModalRef(e.target.value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const val = e.currentTarget.value;
+                            if (!val.trim()) {
+                              // Sem referência: segue direto (o Preço sem REF é barrado na confirmação)
+                              modalPriceInput.current?.focus();
+                              modalPriceInput.current?.select();
+                              return;
+                            }
+                            validateRef(val, 'modal_price').then(isValid => {
+                              if (isValid) {
+                                modalPriceInput.current?.focus();
+                                modalPriceInput.current?.select();
+                              }
+                            }).catch(err => console.error('validateRef error:', err));
+                          }
+                        }}
+                        className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-200 p-2 rounded-lg outline-none text-base font-bold text-white placeholder-white/20 uppercase"
+                        placeholder="REF"
+                        autoComplete="off"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[11px] font-mono text-[#ccff00]/60 uppercase tracking-widest">Preço Un.</label>
+                      <input
+                        ref={modalPriceInput}
+                        type="number"
+                        step="0.01"
+                        inputMode="decimal"
+                        value={modalPrice}
+                        onChange={(e) => {
+                          modalPriceValueRef.current = e.target.value;
+                          setModalPrice(e.target.value);
+                        }}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            modalQtyInput.current?.focus();
+                            modalQtyInput.current?.select();
+                          }
+                        }}
+                        className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-200 p-2 rounded-lg outline-none text-base font-bold text-[#ccff00] placeholder-white/20"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[11px] font-mono text-[#ccff00]/60 uppercase tracking-widest">QTD</label>
+                      <input
+                        ref={modalQtyInput}
+                        type="number"
+                        min={1}
+                        value={modalQty}
+                        onChange={(e) => {
+                          setModalQty(e.target.value.replace(/\D/g, ''));
+                        }}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onBlur={() => {
+                          if (!parseInt(modalQty, 10)) setModalQty('1');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            confirmPurchase();
+                          }
+                        }}
+                        className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-200 p-2 rounded-lg outline-none text-base font-bold text-white placeholder-white/20"
+                        placeholder="1"
+                      />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 w-full justify-between">
-                    <button
-                      type="button"
-                      onClick={() => setConfirmQty(prev => Math.max(1, prev - 1))}
-                      className="w-9 h-9 bg-white/5 hover:bg-white/10 active:bg-white/20 rounded-lg text-white font-black text-lg flex items-center justify-center transition-all select-none border border-white/10"
-                    >
-                      -
-                    </button>
-                    <span className="text-[#ccff00] text-2xl font-black text-center min-w-[50px] font-mono">
-                      {confirmQty}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmQty(prev => prev + 1)}
-                      className="w-9 h-9 bg-white/5 hover:bg-white/10 active:bg-white/20 rounded-lg text-white font-black text-lg flex items-center justify-center transition-all select-none border border-white/10"
-                    >
-                      +
-                    </button>
-                  </div>
-                  {/* Quick selection chips */}
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {[1, 2, 3, 5, 10].map((num) => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => setConfirmQty(num)}
-                        className={cn(
-                          "px-3 py-1.5 rounded-lg text-sm font-black transition-all border",
-                          confirmQty === num 
-                            ? "bg-[#ccff00]/10 border-[#ccff00] text-[#ccff00]" 
-                            : "bg-transparent border-white/5 text-white/50 hover:border-white/10 hover:text-white"
-                        )}
-                      >
-                        {num}x
-                      </button>
-                    ))}
-                  </div>
+                  {/* Dica da mercadoria encontrada no estoque */}
+                  {modalHint && (
+                    <div className="text-[11px] font-mono text-[#ccff00]/70 bg-[#ccff00]/5 border border-[#ccff00]/20 rounded px-2 py-1 truncate text-left">
+                      ✓ {modalHint.descricao || 'PRODUTO ENCONTRADO'}
+                      {modalHint.preco != null && (
+                        <span className="text-white/40"> · R$ {Number(modalHint.preco).toFixed(2).replace('.', ',')}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

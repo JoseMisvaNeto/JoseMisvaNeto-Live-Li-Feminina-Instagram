@@ -306,3 +306,21 @@ test('dashboard reflete a saída ao vender e a entrada ao remover o item', async
   assert.deepEqual(aposRemocao, antes, 'todos os valores do dashboard voltam ao original');
   assert.equal(await estoqueDe('T200'), 10);
 });
+
+// GET /produtos/by-ref/:ref alimenta o lançamento rápido do modal da Live:
+// id (presença no estoque), descricao (dica) e preco_venda (pré-preço do campo).
+test('by-ref devolve id, descrição e preço para o modal da Live e null quando não existe', async () => {
+  await criarProduto('T300', 5); // preço 12,50
+
+  const existe = await req('/produtos/by-ref/T300');
+  assert.equal(existe.body.id, 'prod-T300');
+  assert.equal(existe.body.descricao, 'Produto T300');
+  igual(Number(existe.body.preco_venda), 12.5);
+
+  // o modal envia maiúsculas; a rota normaliza (case-insensitive)
+  const minusculas = await req('/produtos/by-ref/t300');
+  assert.equal(minusculas.body.id, 'prod-T300');
+
+  const naoExiste = await req('/produtos/by-ref/NAO-EXISTE');
+  assert.deepEqual(naoExiste.body, { id: null, descricao: null, preco_venda: null });
+});

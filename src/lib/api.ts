@@ -186,7 +186,9 @@ export const api = {
   getProdutos: () => request<ProdutoRow[]>('/produtos'),
 
   getProdutoByRef: (ref: string) =>
-    request<{ id: string | null }>(`/produtos/by-ref/${encodeURIComponent(ref)}`),
+    request<{ id: string | null; descricao: string | null; preco_venda: number | null }>(
+      `/produtos/by-ref/${encodeURIComponent(ref)}`
+    ),
 
   createProduto: (p: {
     referencia: string;
