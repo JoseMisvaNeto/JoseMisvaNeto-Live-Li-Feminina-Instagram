@@ -3504,11 +3504,11 @@ export default function App() {
                           {/* Discreto: quanto falta p/ o mínimo de compra da live (coluna própria) */}
                           <td className="px-2 py-0.5 text-right whitespace-nowrap">
                             {minimoCompra > 0 && group.total < minimoCompra ? (
-                              <span className="text-[9.6px] font-mono font-bold text-orange-500/60">
+                              <span className="text-[9.6px] font-bold text-orange-500/60">
                                 {(minimoCompra - group.total).toFixed(2)}
                               </span>
                             ) : (
-                              <span className="text-[9.6px] font-mono text-white/10">—</span>
+                              <span className="text-[9.6px] text-white/10">—</span>
                             )}
                           </td>
                           <td className="px-2 py-0.5 text-right">
