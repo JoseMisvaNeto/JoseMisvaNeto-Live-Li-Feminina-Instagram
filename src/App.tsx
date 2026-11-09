@@ -50,6 +50,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { processCSVFiles, downloadCSV, processProductsCSV, downloadProductsCSV, ProcessingResult, InstagramProfile } from './utils/csvProcessor';
+import { downloadAcertoXlsx as downloadAcertoExcel } from './utils/acertoExcel';
 import ProdutosScreen from './components/ProdutosScreen';
 
 // Utility for tailwind classes
@@ -2137,37 +2138,45 @@ export default function App() {
     }
   };
 
-  const copyExcelSummary = useCallback(() => {
+  const downloadAcertoXlsx = useCallback(async () => {
     if (purchases.length === 0) {
-      setToastMessage('Nenhuma venda para copiar!');
+      setToastMessage('Nenhuma venda para exportar!');
       setTimeout(() => setToastMessage(null), 3000);
       return;
     }
 
-    // Agrupar por referência e somar quantidades
-    const summary = purchases.reduce((acc, p) => {
-      const ref = (p.reference || '').toUpperCase().trim();
-      if (!ref) return acc;
-      acc[ref] = (acc[ref] || 0) + Number(p.quantity);
-      return acc;
-    }, {} as Record<string, number>);
+    try {
+      // Busca o catálogo para trazer descrição e preço original de cada referência
+      let productsByRef: Record<string, { descricao?: string; preco_venda?: number }> = {};
+      try {
+        const produtos = await api.getProdutos();
+        productsByRef = (produtos || []).reduce((acc, p) => {
+          const ref = (p.referencia || '').toUpperCase().trim();
+          if (ref) {
+            acc[ref] = { descricao: p.descricao, preco_venda: Number(p.preco_venda) || 0 };
+          }
+          return acc;
+        }, {} as Record<string, { descricao?: string; preco_venda?: number }>);
+      } catch (err) {
+        console.warn('Catálogo indisponível, exportando sem preço original:', err);
+      }
 
-    // Formatar para Excel (Ref [TAB] Qtd)
-    const excelText = Object.entries(summary)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([ref, qty]) => `${ref}\t${qty}`)
-      .join('\n');
+      await downloadAcertoExcel({
+        groups: groupedPurchases.groups,
+        totalValue: groupedPurchases.totalValue,
+        totalPaidValue: groupedPurchases.totalPaidValue,
+        dataLive,
+        productsByRef,
+      });
 
-    // Copiar para área de transferência
-    navigator.clipboard.writeText(excelText).then(() => {
-      setToastMessage('Resumo copiado para o Excel!');
+      setToastMessage('Planilha .xlsx gerada com sucesso!');
       setTimeout(() => setToastMessage(null), 3000);
-    }).catch(err => {
-      console.error('Erro ao copiar:', err);
-      setToastMessage('Erro ao copiar resumo.');
+    } catch (err: any) {
+      console.error('Erro ao gerar planilha:', err);
+      setToastMessage('Erro ao gerar planilha.');
       setTimeout(() => setToastMessage(null), 3000);
-    });
-  }, [purchases]);
+    }
+  }, [purchases, groupedPurchases, dataLive]);
 
   const togglePaid = (id: string) => {
     setPurchases(prev => prev.map(p => String(p.id) === String(id) ? { ...p, paid: !p.paid } : p));
@@ -3170,16 +3179,16 @@ export default function App() {
                                 <button
                                   onClick={() => {
                                     setIsFinalizarModalOpen(false);
-                                    copyExcelSummary();
+                                    downloadAcertoXlsx();
                                   }}
                                   className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/5 transition-colors group"
                                 >
                                   <div className="font-black text-white group-hover:text-[#ccff00] text-sm uppercase tracking-wide mb-0.5 flex items-center gap-2">
-                                    Copiar Resumo para Excel
-                                    <FileText className="w-3 h-3" />
+                                    Baixar Resumo da Live (.xlsx)
+                                    <Download className="w-3 h-3" />
                                   </div>
                                   <div className="text-[10px] text-white/50 leading-tight">
-                                    Gera texto formatado com TAB para colar no Excel.
+                                    Gera planilha com sacolas, referências, quantidades e valores.
                                   </div>
                                 </button>
 
