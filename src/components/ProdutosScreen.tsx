@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api, type ProdutoRow } from '../lib/api';
 import { processProductsCSV, downloadProductsCSV } from '../utils/csvProcessor';
+import { buildIndex, searchProdutos } from '../utils/productSearch';
 import ProdutosCsvImportModal from './ProdutosCsvImportModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -27,39 +28,8 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const normalize = (str: string) =>
-  (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-
 const brl = (v: number) =>
   (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-// Busca inteligente: ref, descrição, fornecedor e valores (preço/custo/lucro)
-// aceita "25,9", "25.9", "2590" ou "25" para o produto de R$ 25,90
-const matchesSearch = (p: ProdutoRow, rawQuery: string): boolean => {
-  const q = normalize(rawQuery);
-  if (!q) return true;
-
-  if (normalize(p.referencia).includes(q)) return true;
-  if (normalize(p.descricao).includes(q)) return true;
-  if (normalize(p.fornecedor || '').includes(q)) return true;
-
-  const qLimpo = q.replace(/^r\$\s*/, '').replace(/\s/g, '');
-  const qNum = Number(qLimpo.replace(',', '.'));
-  if (Number.isFinite(qNum) && qNum >= 0) {
-    const valores = [Number(p.preco_venda) || 0, Number(p.custo) || 0, Number(p.lucro) || 0];
-    for (const v of valores) {
-      const str = v.toFixed(2);
-      // tolerância para arredondamento na comparação numérica
-      if (Math.abs(v - qNum) < 0.005) return true;
-      // substring no formato "25.90" ("25.9", "25", "2590"...)
-      if (str.includes(qLimpo.replace(',', '.'))) return true;
-      const semPonto = str.replace('.', '');
-      const qSemSeparador = qLimpo.replace(/[.,]/g, '');
-      if (qSemSeparador.length > 0 && semPonto.includes(qSemSeparador)) return true;
-    }
-  }
-  return false;
-};
 
 interface ProdutoForm {
   referencia: string;
@@ -113,9 +83,15 @@ export default function ProdutosScreen({ showToast }: { showToast: (msg: string)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Índice pré-calculado: normaliza os campos uma única vez por carregamento,
+  // deixando a busca por tecla rápida mesmo com milhares de produtos.
+  const searchIndex = useMemo(() => buildIndex(produtos), [produtos]);
+
+  // Resultados ordenados por relevância: referência exata primeiro,
+  // depois prefixos ("40", "400", "444"), depois o restante.
   const filtered = useMemo(
-    () => produtos.filter((p) => matchesSearch(p, searchQuery)),
-    [produtos, searchQuery]
+    () => searchProdutos(searchIndex, searchQuery),
+    [searchIndex, searchQuery]
   );
 
   const dashboard = useMemo(() => {
