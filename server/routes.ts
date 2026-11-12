@@ -285,8 +285,10 @@ router.post(
 
     let itemId = null;
 
-    // 3. Insere o item se houver referência. O trigger tr_atualizar_estoque
-    //    baixa automaticamente o estoque da tabela produtos (mesma lógica de hoje).
+    // 3. Insere o item se houver referência. Depois chama baixarEstoqueItem(),
+    //    que insere em movimentacoes_estoque (tipo SAÍDA) — o trigger
+    //    tr_atualizar_estoque dispara naquele INSERT e baixa o estoque do
+    //    produto. (mesma lógica de hoje)
     if (referencia) {
       const itemRes = await db.execute({
         sql: `INSERT INTO live_vendas_itens (venda_id, referencia, preco, quantidade)
@@ -294,6 +296,15 @@ router.post(
         args: [vendaId, referencia, preco, quantidade],
       });
       itemId = Number(plainRow(itemRes.rows[0]).id);
+
+      // Baixa o estoque via movimentacao (o trigger dispara na movimentacao,
+      // NAO no insert de live_vendas_itens)
+      await baixarEstoqueItem(db, {
+        itemId,
+        referencia,
+        quantidade,
+        descricao: `VENDA LIVE - ${dataLive}`,
+      });
     }
 
     res.json({ id: vendaId, itemId });
