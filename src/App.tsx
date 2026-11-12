@@ -1211,6 +1211,7 @@ export default function App() {
   const [separacaoSacolaDestacada, setSeparacaoSacolaDestacada] = useState<string | null>(null);
   const separacaoSacolasRef = useRef<Map<string, SeparacaoSacola>>(new Map());
   const separacaoInputRef = useRef<HTMLInputElement | null>(null);
+  const [sacolasExpandidas, setSacolasExpandidas] = useState<Set<string>>(new Set());
 
   interface SeparacaoSacola {
     codigo: string;
@@ -2708,56 +2709,54 @@ export default function App() {
 
     return (
       <div className="min-h-screen bg-[#0a0a0a] text-white p-6 font-sans overflow-y-auto">
-        {/* Header fixo topo */}
-        <div className="sticky top-0 z-50 bg-[#111]/80 backdrop-blur-md p-4 rounded-2xl border border-[#ccff00]/30 mb-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        {/* Header fixo topo com input integrado */}
+        <div className="sticky top-0 z-50 bg-[#111]/90 backdrop-blur-md p-3 rounded-xl border border-[#ccff00]/30 mb-4 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={sair}
-              className="w-10 h-10 rounded-lg bg-[#1a1a1a] border border-white/10 flex items-center justify-center hover:bg-white/5 transition-all text-white/70 hover:text-white"
+              className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-white/10 flex items-center justify-center hover:bg-white/5 transition-all text-white/70 hover:text-white"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
             <div>
-              <h1 className="text-2xl font-black tracking-tight text-[#ccff00] uppercase">
+              <h1 className="text-xl font-black tracking-tight text-[#ccff00] uppercase leading-none">
                 Separação de Sacolas
               </h1>
-              <p className="text-xs text-white/40 uppercase tracking-wider font-mono">
-                Live {liveConfig.date} · PC · Separe peça por peça
+              <p className="text-[10px] text-white/40 uppercase tracking-wider font-mono leading-none">
+                Live {liveConfig.date} · PC · peça por peça
               </p>
             </div>
           </div>
 
-          {/* Estatísticas */}
-          <div className="flex gap-3 flex-wrap">
-            <div className="bg-[#1a1a1a] border border-[#ccff00]/40 p-3 rounded-xl min-w-[140px]">
-              <div className="text-[10px] text-[#ccff00]/60 font-black uppercase tracking-wider mb-1">
-                Sacolas em andamento
+          {/* Estatísticas compactas */}
+          <div className="flex gap-2 flex-wrap">
+            <div className="bg-[#1a1a1a] border border-[#ccff00]/40 p-2 rounded-lg min-w-[120px]">
+              <div className="text-[9px] text-[#ccff00]/60 font-black uppercase tracking-wider mb-0.5">
+                Em andamento
               </div>
-              <div className="text-2xl font-black text-white">{separacaoEmAndamento.length}</div>
+              <div className="text-xl font-black text-white">{separacaoEmAndamento.length}</div>
             </div>
-            <div className="bg-[#1a1a1a] border border-[#22c55e]/40 p-3 rounded-xl min-w-[140px]">
-              <div className="text-[10px] text-[#22c55e]/60 font-black uppercase tracking-wider mb-1">
-                Sacolas concluídas
+            <div className="bg-[#1a1a1a] border border-[#22c55e]/40 p-2 rounded-lg min-w-[120px]">
+              <div className="text-[9px] text-[#22c55e]/60 font-black uppercase tracking-wider mb-0.5">
+                Concluídas
               </div>
-              <div className="text-2xl font-black text-[#22c55e]">{separacaoConcluidas.length}</div>
+              <div className="text-xl font-black text-[#22c55e]">{separacaoConcluidas.length}</div>
             </div>
-            <div className="bg-[#1a1a1a] border border-[#f59e0b]/40 p-3 rounded-xl min-w-[160px]">
-              <div className="text-[10px] text-[#f59e0b]/60 font-black uppercase tracking-wider mb-1">
+            <div className="bg-[#1a1a1a] border border-[#f59e0b]/40 p-2 rounded-lg min-w-[140px]">
+              <div className="text-[9px] text-[#f59e0b]/60 font-black uppercase tracking-wider mb-0.5">
                 Peças separadas
               </div>
-              <div className="text-2xl font-black text-[#f59e0b]">
+              <div className="text-xl font-black text-[#f59e0b]">
                 {separacaoTotalPecas} / {separacaoTotalAlvo}
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Input sempre focado - topo central */}
-        <div className="max-w-2xl mx-auto mb-8">
-          <div className="bg-[#1a1a1a] border-2 border-[#ccff00]/40 rounded-2xl p-4 shadow-[0_0_25px_rgba(204,255,0,0.15)] relative">
-            <div className="absolute -top-3 left-4 bg-[#ccff00] text-black font-black text-xs px-2 py-0.5 rounded uppercase tracking-wider">
-              Digite o código da sacola
-            </div>
+          {/* Input de código integrado na barra superior */}
+          <div className="mt-2 flex w-full max-w-md md:max-w-lg gap-1">
+            <span className="text-[9px] text-white/30 font-mono uppercase tracking-wider mt-0.5 whitespace-nowrap">
+              Código:
+            </span>
             <input
               ref={separacaoInputRef}
               autoFocus
@@ -2773,29 +2772,26 @@ export default function App() {
                 if (e.key === 'Escape') sair();
               }}
               onBlur={() => {
-                // Mantém o foco sempre no input (exceto ao sair)
                 if (separacaoView) {
                   setTimeout(() => separacaoInputRef.current?.focus(), 50);
                 }
               }}
-              placeholder="Ex: 4, 15, 21..."
-              className="w-full bg-[#0a0a0a] border-none text-4xl font-black text-[#ccff00] outline-none px-6 py-4 tracking-wider text-center placeholder-white/10 uppercase"
+              placeholder="Ex: 4"
+              className="flex-1 bg-[#0a0a0a] border border-[#ccff00]/30 rounded text-[14px] font-black text-[#ccff00] outline-none px-3 py-1.5 tracking-wider text-center placeholder-white/10 uppercase focus:border-[#ccff00]"
             />
-            {separacaoInput && (
-              <button
-                onClick={() => {
-                  adicionarPecaSacola(separacaoInput.trim());
-                  setSeparacaoInput('');
-                }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 bg-[#ccff00] text-black font-black px-4 py-2 rounded-lg hover:bg-[#ccff00]/90 transition-all uppercase text-[10px] tracking-wider"
-              >
-                Adicionar
-              </button>
-            )}
-            <p className="text-[10px] text-white/30 mt-3 font-mono uppercase tracking-wider text-center">
-              Enter = +1 peça na sacola · Digite código novo = inicia sacola · ESC = sair
-            </p>
+            <button
+              onClick={() => {
+                adicionarPecaSacola(separacaoInput.trim());
+                setSeparacaoInput('');
+              }}
+              className="bg-[#ccff00] text-black font-black text-[10px] px-3 py-1.5 rounded hover:bg-[#ccff00]/90 transition-all uppercase tracking-wider whitespace-nowrap"
+            >
+              Add
+            </button>
           </div>
+          <p className="text-[8px] text-white/20 mt-1 font-mono uppercase tracking-wider text-center">
+            Enter = +1 peça · Código novo = inicia sacola · ESC = sair
+          </p>
         </div>
 
         {/* Grid de sacolas em andamento */}
@@ -2812,7 +2808,7 @@ export default function App() {
           </div>
 
           <div
-            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2"
           >
             {separacaoEmAndamento.length === 0 ? (
               <div className="col-span-full bg-[#111] border border-white/10 rounded-2xl p-12 text-center">
@@ -2841,72 +2837,89 @@ export default function App() {
                   <div
                     key={sacola.codigo}
                     className={cn(
-                      'relative group bg-[#111] border rounded-2xl p-4 transition-all duration-300',
+                      'relative group bg-[#111] border rounded-lg p-2.5 transition-all duration-200',
                           estaDestacada
-                            ? 'border-[#ccff00]/60 shadow-[0_0_20px_rgba(204,255,0,0.25)] animate-pulse'
-                            : 'border-white/10 hover:border-[#ccff00]/50 hover:bg-white/5'
+                            ? 'border-[#ccff00]/70 shadow-[0_0_15px_rgba(204,255,0,0.2)] bg-[#1a1a1a]'
+                            : 'border-white/5 hover:border-[#ccff00]/50 hover:bg-white/3'
                       )
                     }
                   >
-                    {/* Ordem na fila (topo esquerda) */}
-                    <div className="absolute -top-3 -left-3 bg-[#ccff00] text-black font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider shadow-lg">
-                      Posição {sacola.ordem} da fila
+                    {/* Número da fila (topo esquerda) */}
+                    <div className="absolute -top-1 -left-1 bg-[#ccff00] text-black font-black text-[11px] font-bold px-2 py-0.5 rounded shadow-lg z-10">
+                      #{sacola.ordem}
                     </div>
 
                     {/* Código grande */}
-                    <div className="mt-2 text-3xl font-black text-[#ccff00] tracking-tighter uppercase">
+                    <div className="mt-1 text-2xl font-black text-[#ccff00] tracking-tighter uppercase">
                       {sacola.codigo}
                     </div>
 
                     {/* Nome do cliente */}
-                    <div className="text-white/90 font-bold text-sm mt-1 truncate">
+                    <div className="text-white/80 font-bold text-xs mt-0.5 leading-none truncate">
                       {sacola.nome}
                     </div>
                     {sacola.username && (
-                      <div className="text-[10px] text-[#00ffff]/60 font-mono uppercase tracking-wider mt-0.5">
+                      <div className="text-[9px] text-[#00ffff]/50 font-mono uppercase tracking-wider mt-0.5">
                         @{sacola.username.replace(/^@/, '')}
                       </div>
                     )}
 
-                    {/* Mercadorias */}
-                    <div className="mt-3 space-y-1">
-                      {sacola.mercadorias.length > 0 ? (
-                        sacola.mercadorias.map((m) => (
-                          <div key={m.referencia} className="flex justify-between items-center text-[10px] font-mono text-white/70 bg-[#1a1a1a] px-2 py-1 rounded border border-white/5">
-                            <span>{m.descricao}</span>
-                            <span className="text-[#ccff00]">x{m.quantidade}</span>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-[10px] text-white/40 font-mono italic bg-[#1a1a1a] px-2 py-1 rounded border border-white/5">
-                          Sem mercadorias mapeadas (código novo)
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Progresso visual */}
-                    <div className="mt-3">
-                      <div className="flex justify-between text-[10px] font-black uppercase tracking-wider mb-1">
-                        <span className="text-white/50">Separadas</span>
-                        <span className="text-[#ccff00]">
-                          {sacola.pecasSeparadas} / {sacola.totalAlvo}
-                        </span>
+                    {/* Barra de evolução */}
+                    <div className="mt-2">
+                      <div className="flex justify-between text-[9px] font-black uppercase tracking-wider mb-0.5">
+                        <span className="text-white/40">{sacola.pecasSeparadas}</span>
+                        <span className="text-[#ccff00]">{sacola.totalAlvo}</span>
                       </div>
-                      <div className="h-2 bg-[#1a1a1a] rounded-full overflow-hidden border border-white/10">
+                      <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden border border-white/10">
                         <div
-                          className={`h-full transition-all duration-500 ${pct >= 100 ? 'bg-[#22c55e]' : 'bg-[#ccff00]'}`}
+                          className={`h-full transition-all duration-300 ${pct >= 100 ? 'bg-[#22c55e]' : 'bg-[#ccff00]'}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
                     </div>
 
-                    {/* Tamanho sugerido da sacola */}
-                    <div className={`mt-3 inline-block px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider border ${tamanhoCor}`}>
-                      {tamanhoLabel}
+                    {/* Tamanho sugerido */}
+                    <div className={`mt-1.5 inline-block px-1 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${tamanhoCor}`}>
+                      SACOLA {tamanhoLabel}
+                    </div>
+
+                    {/* Mercadorias - expandir */}
+                    <div className="mt-2">
+                      <button
+                        onClick={() => {
+                          setSacolasExpandidas(prev => {
+                            const next = new Set(prev);
+                            if (next.has(sacola.codigo)) next.delete(sacola.codigo);
+                            else next.add(sacola.codigo);
+                            return next;
+                          });
+                        }}
+                        className="w-full bg-[#1a1a1a] border border-white/10 text-[9px] font-black text-white/60 px-1.5 py-0.5 rounded hover:bg-white/5 hover:text-[#ccff00] hover:border-[#ccff00]/50 transition-all uppercase tracking-wider"
+                      >
+                        {sacolasExpandidas.has(sacola.codigo) ? '▼ ocultar mercadorias' : '▲ ver mercadorias'}
+                      </button>
+                      {sacolasExpandidas.has(sacola.codigo) && sacola.mercadorias.length > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          {sacola.mercadorias.map((m) => (
+                            <div
+                              key={m.referencia}
+                              className="flex justify-between items-center text-[9px] font-mono text-white/60 bg-[#1a1a1a] px-1 py-0.5 rounded border border-white/5"
+                            >
+                              <span className="truncate max-w-[80px]">{m.descricao}</span>
+                              <span className="text-[#ccff00]">x{m.quantidade}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {sacolasExpandidas.has(sacola.codigo) && sacola.mercadorias.length === 0 && (
+                        <div className="mt-1 text-[9px] text-white/40 font-mono italic bg-[#1a1a1a] px-1 py-0.5 rounded border border-white/5">
+                          Sem mercadorias mapeadas
+                        </div>
+                      )}
                     </div>
 
                     {/* Ações rápidas */}
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-2 flex gap-1">
                       <button
                         onClick={() => adicionarPecaSacola(sacola.codigo)}
                         disabled={pct >= 100}
