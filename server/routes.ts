@@ -229,6 +229,77 @@ router.post(
   })
 );
 
+// ---- Venda completa em uma única chamada (cliente + venda + item) ----
+// Usada pelo modal da Live para reduzir de 3-4 requisições sequenciais para 1,
+// eliminando múltiplas idas e vindas de rede e acelerando o salvamento.
+// Tudo roda no servidor, onde as queries são locais ao banco.
+router.post(
+  '/vendas/completar',
+  wrap(async (req, res) => {
+    const db = getDb();
+    const b = req.body || {};
+
+    const clienteId = Number(b.cliente_id);
+    const dataLive = String(b.data_live || '');
+    const referencia = b.referencia ? String(b.referencia).trim().toUpperCase() : null;
+    const preco = Number(b.preco) || 0;
+    const quantidade = Math.max(1, Number(b.quantidade) || 1);
+    const qtdLive = Number(b.qtd_live) || 1;
+
+    if (!clienteId || !dataLive) {
+      res.status(400).json({ error: 'cliente_id e data_live obrigatórios' });
+      return;
+    }
+
+    // 1. Upsert do cliente (mesma lógica de /clientes/upsert-id)
+    await db.execute({
+      sql: `INSERT INTO live_clientes (id, username, nome_completo, codigo_cliente)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              username = excluded.username,
+              nome_completo = excluded.nome_completo,
+              codigo_cliente = excluded.codigo_cliente`,
+      args: [
+        clienteId,
+        String(b.username || ''),
+        String(b.nome_completo || ''),
+        b.codigo_cliente != null ? Number(b.codigo_cliente) : null,
+      ],
+    });
+
+    // 2. Upsert da venda e captura o id gerado
+    const vendaRes = await db.execute({
+      sql: `INSERT INTO live_vendas (cliente_id, data_live, qtd_live, pago, status)
+            VALUES (?, ?, ?, 0, 'pendente')
+            ON CONFLICT(cliente_id, data_live) DO UPDATE SET
+              qtd_live = excluded.qtd_live
+            RETURNING id`,
+      args: [clienteId, dataLive, qtdLive],
+    });
+
+    const vendaId = Number(plainRow(vendaRes.rows[0]).id);
+    if (!vendaId) {
+      res.status(500).json({ error: 'Falha ao registrar a venda' });
+      return;
+    }
+
+    let itemId = null;
+
+    // 3. Insere o item se houver referência. O trigger tr_atualizar_estoque
+    //    baixa automaticamente o estoque da tabela produtos (mesma lógica de hoje).
+    if (referencia) {
+      const itemRes = await db.execute({
+        sql: `INSERT INTO live_vendas_itens (venda_id, referencia, preco, quantidade)
+              VALUES (?, ?, ?, ?) RETURNING id`,
+        args: [vendaId, referencia, preco, quantidade],
+      });
+      itemId = Number(plainRow(itemRes.rows[0]).id);
+    }
+
+    res.json({ id: vendaId, itemId });
+  })
+);
+
 router.post(
   '/vendas',
   wrap(async (req, res) => {

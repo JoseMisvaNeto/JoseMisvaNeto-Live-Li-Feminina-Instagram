@@ -364,6 +364,12 @@ export default function App() {
               autoPriceRef.current = precoTxt;
               modalPriceValueRef.current = precoTxt;
               setModalPrice(precoTxt);
+              // Pré-preenchimento automático: se o campo já está com foco,
+              // seleciona tudo para permitir digitação imediata por cima.
+              setTimeout(() => {
+                const el = modalPriceInput.current;
+                if (el && document.activeElement === el) el.select();
+              }, 0);
             }
           }
         } else {
@@ -1260,45 +1266,33 @@ export default function App() {
       const exists = shoppingListRef.current.find(c => String(c.id) === String(selectedCustomer.id));
       const qtdLive = exists ? (exists.purchaseCount || 0) + qty : qty;
 
-      // 1. Garante de forma síncrona que o cliente existe
-      await api.upsertClienteId({
-        id: Number(selectedCustomer.id),
+      // 1+2+3. Cliente + venda + item em uma única chamada (servidor executa tudo localmente)
+      const { id: vendaId, itemId } = await api.completarVenda({
+        cliente_id: Number(selectedCustomer.id),
         username: selectedCustomer.username,
         nome_completo: finalName,
-        codigo_cliente: customerCode
-      });
-
-      // 2. Garante de forma síncrona a venda (com o contador de peças da live)
-      const { id: vendaId } = await api.upsertVenda({
-        cliente_id: Number(selectedCustomer.id),
+        codigo_cliente: customerCode,
         data_live: liveConfig.date,
         qtd_live: qtdLive,
-        pago: false,
-        status: 'pendente'
+        referencia: refTrim || null,
+        preco: priceNum,
+        quantidade: qty,
       });
 
       if (!vendaId) throw new Error('Falha ao registrar a venda');
 
-      // 3. Lançamento rápido: cria o item (dá baixa no estoque via trigger, como no Acerto)
-      if (refTrim) {
-        const { id: itemId } = await api.insertItem({
-          venda_id: vendaId,
-          referencia: refTrim,
-          preco: priceNum,
-          quantidade: qty,
-        });
-        if (!itemId) throw new Error('Falha ao registrar o item');
+      const newPurchase: Purchase = {
+        id: itemId ? String(itemId) : String(vendaId),
+        venda_id: String(vendaId),
+        customerId: Number(selectedCustomer.id),
+        reference: refTrim,
+        value: priceNum,
+        quantity: qty,
+        paid: false,
+        timestamp: new Date(),
+      };
 
-        const newPurchase: Purchase = {
-          id: String(itemId),
-          venda_id: String(vendaId),
-          customerId: Number(selectedCustomer.id),
-          reference: refTrim,
-          value: priceNum,
-          quantity: qty,
-          paid: false,
-          timestamp: new Date(),
-        };
+      if (refTrim) {
         setPurchases(prev => {
           const updated = [newPurchase, ...prev];
           updated.sort((a, b) => {

@@ -116,6 +116,24 @@ export const api = {
     mensagem_enviada?: boolean;
   }) => request<{ id: number | null }>('/vendas/upsert', { method: 'POST', body: JSON.stringify(fields) }),
 
+  // Venda completa em uma única chamada (cliente + venda + item).
+  // Reduz de 3-4 requisições sequenciais para 1, acelerando o salvamento na Live.
+  completarVenda: (fields: {
+    cliente_id: number;
+    username: string;
+    nome_completo: string;
+    codigo_cliente?: number | null;
+    data_live: string;
+    qtd_live?: number;
+    referencia?: string | null;
+    preco?: number | null;
+    quantidade?: number;
+  }) =>
+    request<{ id: number | null; itemId: number | null }>(
+      '/vendas/completar',
+      { method: 'POST', body: JSON.stringify(fields) }
+    ),
+
   insertVenda: (fields: Partial<VendaRow> & { cliente_id: number; data_live: string }) =>
     request<VendaRow>('/vendas', { method: 'POST', body: JSON.stringify(fields) }),
 
