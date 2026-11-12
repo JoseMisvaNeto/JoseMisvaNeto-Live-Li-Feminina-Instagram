@@ -44,7 +44,8 @@ import {
   PackageCheck,
   ChevronUp,
   ChevronDown,
-  Tag
+  Tag,
+  Scan
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -1201,6 +1202,142 @@ export default function App() {
   };
 
   const [isConfirmingPurchase, setIsConfirmingPurchase] = useState(false);
+
+  // ========================================================================
+  // MODO SEPARAÇÃO DE SACOLAS (acerto pós-live, peça por peça, PC maximizado)
+  // ========================================================================
+  const [separacaoView, setSeparacaoView] = useState(false);
+  const [separacaoInput, setSeparacaoInput] = useState('');
+  const [separacaoSacolaDestacada, setSeparacaoSacolaDestacada] = useState<string | null>(null);
+  const separacaoSacolasRef = useRef<Map<string, SeparacaoSacola>>(new Map());
+  const separacaoInputRef = useRef<HTMLInputElement | null>(null);
+
+  interface SeparacaoSacola {
+    codigo: string;
+    nome: string;
+    username: string;
+    ordem: number;
+    totalAlvo: number;
+    pecasSeparadas: number;
+    concluida: boolean;
+    mercadorias: { referencia: string; descricao: string; preco: number; quantidade: number }[];
+    valorTotal: number;
+    tamanhoSugerido: 'P' | 'M' | 'G';
+    startedAt: Date;
+  }
+
+  const sugerirTamanho = (qtd: number, mercadorias: SeparacaoSacola['mercadorias']): 'P' | 'M' | 'G' => {
+    const palavrasGrandes = ['casaco', 'vestido', 'blazer', 'jaqueta', 'saia longa', 'calça'];
+    const temGrande = mercadorias.some(m =>
+      palavrasGrandes.some(p => m.descricao.toLowerCase().includes(p))
+    );
+    if (qtd >= 8 || temGrande) return 'G';
+    if (qtd >= 3) return 'M';
+    return 'P';
+  };
+
+  const agruparMercadoriasSacola = (customerId: number) => {
+    const itens = purchases.filter(p => Number(p.customerId) === customerId);
+    const mapa = new Map<string, { referencia: string; descricao: string; preco: number; quantidade: number }>();
+    for (const it of itens) {
+      const chave = String(it.reference);
+      if (mapa.has(chave)) {
+        const cur = mapa.get(chave)!;
+        cur.quantidade += Number(it.quantity);
+      } else {
+        mapa.set(chave, {
+          referencia: String(it.reference),
+          descricao: chave,
+          preco: Number(it.value),
+          quantidade: Number(it.quantity),
+        });
+      }
+    }
+    return Array.from(mapa.values());
+  };
+
+  const buscarSacolaPorCodigo = (codigo: string): SeparacaoSacola | null => {
+    const clean = codigo.trim().toUpperCase();
+    if (!clean) return null;
+
+    // 1. procura por codigo_cliente nas sacolas já iniciadas
+    const jaIniciada = separacaoSacolasRef.current.get(clean);
+    if (jaIniciada) return jaIniciada;
+
+    // 2. procura no shoppingList da live atual por codigo_cliente
+    const cliente = shoppingList.find(c =>
+      String(c.codigo_cliente || '').toUpperCase() === clean ||
+      String(c.id) === clean
+    );
+    if (cliente) {
+      const mercadorias = agruparMercadoriasSacola(Number(cliente.id));
+      const qtdAlvo = mercadorias.reduce((s, m) => s + m.quantidade, 0) ||
+        shoppingList.find(c => Number(c.id) === Number(cliente.id))?.purchaseCount || 0;
+      const sacola: SeparacaoSacola = {
+        codigo: clean,
+        nome: cliente.nome_completo || cliente.username || 'Cliente',
+        username: cliente.username || '',
+        ordem: separacaoSacolasRef.current.size + 1,
+        totalAlvo: qtdAlvo || mercadorias.reduce((s, m) => s + m.quantidade, 0) || 1,
+        pecasSeparadas: 0,
+        concluida: false,
+        mercadorias,
+        valorTotal: mercadorias.reduce((s, m) => s + m.preco * m.quantidade, 0),
+        tamanhoSugerido: sugerirTamanho(
+          mercadorias.reduce((s, m) => s + m.quantidade, 0),
+          mercadorias
+        ),
+        startedAt: new Date(),
+      };
+      separacaoSacolasRef.current.set(clean, sacola);
+      return sacola;
+    }
+
+    // 3. código não existe fiscalmente nesta live — cria sacola temporária
+    const sacola: SeparacaoSacola = {
+      codigo: clean,
+      nome: `CÓD. ${clean}`,
+      username: '',
+      ordem: separacaoSacolasRef.current.size + 1,
+      totalAlvo: 1,
+      pecasSeparadas: 0,
+      concluida: false,
+      mercadorias: [],
+      valorTotal: 0,
+      tamanhoSugerido: 'P',
+      startedAt: new Date(),
+    };
+    separacaoSacolasRef.current.set(clean, sacola);
+    return sacola;
+  };
+
+  const adicionarPecaSacola = (codigo: string) => {
+    const sacola = buscarSacolaPorCodigo(codigo);
+    if (!sacola) return;
+    sacola.pecasSeparadas += 1;
+    if (sacola.pecasSeparadas >= sacola.totalAlvo) sacola.concluida = true;
+    separacaoSacolasRef.current.set(codigo, sacola);
+    setSeparacaoSacolaDestacada(codigo);
+    setSeparacaoInput('');
+  };
+
+  const removerPecaSacola = (codigo: string) => {
+    const sacola = separacaoSacolasRef.current.get(codigo);
+    if (!sacola || sacola.pecasSeparadas <= 0) return;
+    sacola.pecasSeparadas -= 1;
+    sacola.concluida = false;
+    separacaoSacolasRef.current.set(codigo, sacola);
+    setSeparacaoSacolaDestacada(codigo);
+  };
+
+  const separacaoSacolas: SeparacaoSacola[] = [
+    ...separacaoSacolasRef.current.values(),
+  ].sort((a, b) => a.ordem - b.ordem);
+
+  const separacaoEmAndamento = separacaoSacolas.filter(s => !s.concluida);
+  const separacaoConcluidas = separacaoSacolas.filter(s => s.concluida);
+  const separacaoTotalPecas = separacaoSacolas.reduce((s, s2) => s + s2.pecasSeparadas, 0);
+  const separacaoTotalAlvo = separacaoSacolas.reduce((s, s2) => s + s2.totalAlvo, 0);
 
   // "Quanto já comprou na live": R$ dos itens lançados + peças declaradas (qtd_live)
   // e quanto falta para o mínimo de compra configurado
@@ -2561,6 +2698,305 @@ export default function App() {
     }
   };
 
+  // ========================================================================
+  // COMPONENTE: MODO SEPARAÇÃO DE SACOLAS (PC, tela cheia)
+  // ========================================================================
+  const SeparacaoView = () => {
+    const sair = () => {
+      setSeparacaoView(false);
+    };
+
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-white p-6 font-sans overflow-y-auto">
+        {/* Header fixo topo */}
+        <div className="sticky top-0 z-50 bg-[#111]/80 backdrop-blur-md p-4 rounded-2xl border border-[#ccff00]/30 mb-6 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={sair}
+              className="w-10 h-10 rounded-lg bg-[#1a1a1a] border border-white/10 flex items-center justify-center hover:bg-white/5 transition-all text-white/70 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-[#ccff00] uppercase">
+                Separação de Sacolas
+              </h1>
+              <p className="text-xs text-white/40 uppercase tracking-wider font-mono">
+                Live {liveConfig.date} · PC · Separe peça por peça
+              </p>
+            </div>
+          </div>
+
+          {/* Estatísticas */}
+          <div className="flex gap-3 flex-wrap">
+            <div className="bg-[#1a1a1a] border border-[#ccff00]/40 p-3 rounded-xl min-w-[140px]">
+              <div className="text-[10px] text-[#ccff00]/60 font-black uppercase tracking-wider mb-1">
+                Sacolas em andamento
+              </div>
+              <div className="text-2xl font-black text-white">{separacaoEmAndamento.length}</div>
+            </div>
+            <div className="bg-[#1a1a1a] border border-[#22c55e]/40 p-3 rounded-xl min-w-[140px]">
+              <div className="text-[10px] text-[#22c55e]/60 font-black uppercase tracking-wider mb-1">
+                Sacolas concluídas
+              </div>
+              <div className="text-2xl font-black text-[#22c55e]">{separacaoConcluidas.length}</div>
+            </div>
+            <div className="bg-[#1a1a1a] border border-[#f59e0b]/40 p-3 rounded-xl min-w-[160px]">
+              <div className="text-[10px] text-[#f59e0b]/60 font-black uppercase tracking-wider mb-1">
+                Peças separadas
+              </div>
+              <div className="text-2xl font-black text-[#f59e0b]">
+                {separacaoTotalPecas} / {separacaoTotalAlvo}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Input sempre focado - topo central */}
+        <div className="max-w-2xl mx-auto mb-8">
+          <div className="bg-[#1a1a1a] border-2 border-[#ccff00]/40 rounded-2xl p-4 shadow-[0_0_25px_rgba(204,255,0,0.15)] relative">
+            <div className="absolute -top-3 left-4 bg-[#ccff00] text-black font-black text-xs px-2 py-0.5 rounded uppercase tracking-wider">
+              Digite o código da sacola
+            </div>
+            <input
+              ref={separacaoInputRef}
+              autoFocus
+              value={separacaoInput}
+              onChange={(e) => setSeparacaoInput(e.target.value.toUpperCase())}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (separacaoInput.trim()) {
+                    adicionarPecaSacola(separacaoInput.trim());
+                  }
+                }
+                if (e.key === 'Escape') sair();
+              }}
+              onBlur={() => {
+                // Mantém o foco sempre no input (exceto ao sair)
+                if (separacaoView) {
+                  setTimeout(() => separacaoInputRef.current?.focus(), 50);
+                }
+              }}
+              placeholder="Ex: 4, 15, 21..."
+              className="w-full bg-[#0a0a0a] border-none text-4xl font-black text-[#ccff00] outline-none px-6 py-4 tracking-wider text-center placeholder-white/10 uppercase"
+            />
+            {separacaoInput && (
+              <button
+                onClick={() => {
+                  adicionarPecaSacola(separacaoInput.trim());
+                  setSeparacaoInput('');
+                }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 bg-[#ccff00] text-black font-black px-4 py-2 rounded-lg hover:bg-[#ccff00]/90 transition-all uppercase text-[10px] tracking-wider"
+              >
+                Adicionar
+              </button>
+            )}
+            <p className="text-[10px] text-white/30 mt-3 font-mono uppercase tracking-wider text-center">
+              Enter = +1 peça na sacola · Digite código novo = inicia sacola · ESC = sair
+            </p>
+          </div>
+        </div>
+
+        {/* Grid de sacolas em andamento */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-black text-[#ccff00] uppercase tracking-wider">
+              Em separação ({separacaoEmAndamento.length})
+            </h2>
+            {separacaoEmAndamento.length > 0 && (
+              <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider">
+                Ordem de início da fila
+              </span>
+            )}
+          </div>
+
+          <div
+            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+          >
+            {separacaoEmAndamento.length === 0 ? (
+              <div className="col-span-full bg-[#111] border border-white/10 rounded-2xl p-12 text-center">
+                <div className="text-white/20 text-[12px] font-mono mb-2 uppercase tracking-wider">
+                  Nenhuma sacola iniciada ainda
+                </div>
+                <div className="text-white/40 text-sm">
+                  Digite o código da primeira sacola acima para começar
+                </div>
+              </div>
+            ) : (
+              separacaoEmAndamento.map((sacola) => {
+                const pct = sacola.totalAlvo > 0
+                  ? Math.min(100, Math.round((sacola.pecasSeparadas / sacola.totalAlvo) * 100))
+                  : 0;
+                const estaDestacada = separacaoSacolaDestacada === sacola.codigo;
+                const tamanhoCor =
+                  sacola.tamanhoSugerido === 'P' ? 'bg-[#22c55e]/20 text-[#22c55e]' :
+                  sacola.tamanhoSugerido === 'M' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' :
+                  'bg-[#ef4444]/20 text-[#ef4444]';
+                const tamanhoLabel =
+                  sacola.tamanhoSugerido === 'P' ? 'PEQUENA' :
+                  sacola.tamanhoSugerido === 'M' ? 'MÉDIA' : 'GRANDE';
+
+                return (
+                  <div
+                    key={sacola.codigo}
+                    className={cn(
+                      'relative group bg-[#111] border rounded-2xl p-4 transition-all duration-300',
+                          estaDestacada
+                            ? 'border-[#ccff00]/60 shadow-[0_0_20px_rgba(204,255,0,0.25)] animate-pulse'
+                            : 'border-white/10 hover:border-[#ccff00]/50 hover:bg-white/5'
+                      )
+                    }
+                  >
+                    {/* Ordem na fila (topo esquerda) */}
+                    <div className="absolute -top-3 -left-3 bg-[#ccff00] text-black font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider shadow-lg">
+                      Posição {sacola.ordem} da fila
+                    </div>
+
+                    {/* Código grande */}
+                    <div className="mt-2 text-3xl font-black text-[#ccff00] tracking-tighter uppercase">
+                      {sacola.codigo}
+                    </div>
+
+                    {/* Nome do cliente */}
+                    <div className="text-white/90 font-bold text-sm mt-1 truncate">
+                      {sacola.nome}
+                    </div>
+                    {sacola.username && (
+                      <div className="text-[10px] text-[#00ffff]/60 font-mono uppercase tracking-wider mt-0.5">
+                        @{sacola.username.replace(/^@/, '')}
+                      </div>
+                    )}
+
+                    {/* Mercadorias */}
+                    <div className="mt-3 space-y-1">
+                      {sacola.mercadorias.length > 0 ? (
+                        sacola.mercadorias.map((m) => (
+                          <div key={m.referencia} className="flex justify-between items-center text-[10px] font-mono text-white/70 bg-[#1a1a1a] px-2 py-1 rounded border border-white/5">
+                            <span>{m.descricao}</span>
+                            <span className="text-[#ccff00]">x{m.quantidade}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-[10px] text-white/40 font-mono italic bg-[#1a1a1a] px-2 py-1 rounded border border-white/5">
+                          Sem mercadorias mapeadas (código novo)
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Progresso visual */}
+                    <div className="mt-3">
+                      <div className="flex justify-between text-[10px] font-black uppercase tracking-wider mb-1">
+                        <span className="text-white/50">Separadas</span>
+                        <span className="text-[#ccff00]">
+                          {sacola.pecasSeparadas} / {sacola.totalAlvo}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-[#1a1a1a] rounded-full overflow-hidden border border-white/10">
+                        <div
+                          className={`h-full transition-all duration-500 ${pct >= 100 ? 'bg-[#22c55e]' : 'bg-[#ccff00]'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Tamanho sugerido da sacola */}
+                    <div className={`mt-3 inline-block px-2 py-1 rounded text-[9px] font-black uppercase tracking-wider border ${tamanhoCor}`}>
+                      {tamanhoLabel}
+                    </div>
+
+                    {/* Ações rápidas */}
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => adicionarPecaSacola(sacola.codigo)}
+                        disabled={pct >= 100}
+                        className="flex-1 bg-[#1a1a1a] border border-[#ccff00]/40 text-[#ccff00] text-xs font-black px-2 py-1.5 rounded hover:bg-[#ccff00]/20 disabled:opacity-50 disabled:text-white/40 transition-all uppercase tracking-wider"
+                      >
+                        +1
+                      </button>
+                      <button
+                        onClick={() => removerPecaSacola(sacola.codigo)}
+                        className="w-8 h-8 bg-[#1a1a1a] border border-red-500/30 text-red-500 text-xs font-black rounded hover:bg-red-500/20 transition-all"
+                        title="Desfazer última peça"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    {pct >= 100 && (
+                      <div className="mt-2 bg-[#22c55e]/10 border border-[#22c55e]/30 text-[#22c55e] text-[9px] font-black px-2 py-1 rounded uppercase tracking-wider text-center animate-bounce">
+                        ✓ FECHADA
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Zona de sacolas concluídas */}
+        {separacaoConcluidas.length > 0 && (
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-black text-[#22c55e] uppercase tracking-wider">
+                Concluídas ({separacaoConcluidas.length})
+              </h2>
+              <span className="text-[10px] text-[#22c55e]/60 font-mono uppercase tracking-wider">
+                Mova essas sacolas para o lado
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              {separacaoConcluidas.map((sacola) => (
+                <div
+                  key={sacola.codigo}
+                  className="bg-[#111] border border-[#22c55e]/40 rounded-xl p-3 text-center animate-bounce-in"
+                >
+                  <div className="text-[#22c55e] text-2xl font-black mb-1">{sacola.codigo}</div>
+                  <div className="text-[9px] text-[#22c55e]/80 font-black uppercase tracking-wider">
+                    {sacola.pecasSeparadas}/{sacola.totalAlvo}
+                  </div>
+                  <div className="text-[9px] text-white/40 font-mono mt-1 uppercase tracking-wider">
+                    {tamanhoLabel(sacola.tamanhoSugerido)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Rodapé com resumo global */}
+        {separacaoSacolas.length > 0 && (
+          <div className="mt-8 bg-[#111] border border-[#ccff00]/30 rounded-2xl p-6 text-center">
+            <div className="text-[11px] text-[#ccff00]/70 font-black uppercase tracking-wider mb-2">
+              Resumo da separação
+            </div>
+            <div className="flex flex-col md:flex-row justify-center gap-6 text-lg font-black">
+              <span className="text-white">
+                {separacaoConcluidas.length} / {separacaoSacolas.length} sacolas fechadas
+              </span>
+              <span className="text-[#ccff00]">
+                {separacaoTotalPecas} de {separacaoTotalAlvo} peças separadas
+              </span>
+              <span className="text-[#22c55e]">
+                R$ {separacaoSacolas.reduce((a, b) => a + b.valorTotal, 0).toFixed(2).replace('.', ',')}
+              </span>
+            </div>
+            {separacaoConcluidas.length === separacaoSacolas.length && separacaoSacolas.length > 0 && (
+              <div className="mt-4 text-[#22c55e] font-black text-xs uppercase tracking-wider animate-bounce">
+                ✓ Todas as sacolas foram separadas! Pode seguir para o acerto financeiro.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  function tamanhoLabel(t: 'P' | 'M' | 'G') {
+    return t === 'P' ? 'PEQUENA' : t === 'M' ? 'MÉDIA' : 'GRANDE';
+  }
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-[#ccff00] selection:text-black">
       <Navbar 
@@ -3532,7 +3968,7 @@ export default function App() {
                   </table>
                 </div>
               </div>
-            </motion.div>
+              </motion.div>
           ) : activeTab === 'sacolas' ? (
             <motion.div
               key="sacolas-tab"
@@ -5266,6 +5702,27 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Botão flutuante para entrar no Modo Separação */}
+      {!separacaoView && (
+        <button
+          onClick={() => {
+            setSeparacaoView(true);
+            setTimeout(() => separacaoInputRef.current?.focus(), 50);
+          }}
+          className="fixed bottom-6 right-6 z-[60] bg-[#ccff00] text-black font-black text-xs uppercase px-6 py-3 rounded-full shadow-[0_0_25px_rgba(204,255,0,0.6)] hover:shadow-[0_0_40px_rgba(204,255,0,0.8)] hover:scale-105 transition-all transform flex items-center gap-2 tracking-wider"
+        >
+          <Scan className="w-4 h-4" /> Modo Separação
+        </button>
+      )}
+
+      {/* Overlay Modo Separação - cobre a tela inteira quando ativo (PC) */}
+      {separacaoView && (
+        <div className="fixed inset-0 z-[100] bg-[#0a0a0a]/98 backdrop-blur-md">
+          <SeparacaoView />
+        </div>
+      )}
+
     </div>
   );
 }
