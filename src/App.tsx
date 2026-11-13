@@ -1215,6 +1215,7 @@ export default function App() {
   // Popup de mercadorias (explodido, não empurra os cards)
   const [mercadoriaAberta, setMercadoriaAberta] = useState<string | null>(null);
   const [mercadoriaAcima, setMercadoriaAcima] = useState(false);
+  const [mercadoriaDireita, setMercadoriaDireita] = useState(false);
   // Incrementado ao restaurar do localStorage para forçar a re-renderização da grade
   const [separacaoVersao, setSeparacaoVersao] = useState(0);
   // Catálogo de produtos (referência -> nome) para exibir nas mercadorias
@@ -1272,10 +1273,11 @@ export default function App() {
     const jaIniciada = separacaoSacolasRef.current.get(clean);
     if (jaIniciada) return jaIniciada;
 
-    // 2. procura no shoppingList da live atual por codigo_cliente
+    // 2. procura no shoppingList da live atual pelo codigo_cliente —
+    //    é o mesmo número exibido na lista de fechamento da tela Acerto.
+    //    (não aceita id interno do banco: código que não aparece na lista é ignorado)
     const cliente = shoppingList.find(c =>
-      String(c.codigo_cliente || '').toUpperCase() === clean ||
-      String(c.id) === clean
+      String(c.codigo_cliente ?? '').toUpperCase() === clean
     );
     if (cliente) {
       const mercadorias = agruparMercadoriasSacola(Number(cliente.id));
@@ -1301,22 +1303,9 @@ export default function App() {
       return sacola;
     }
 
-    // 3. código não existe fiscalmente nesta live — cria sacola temporária
-    const sacola: SeparacaoSacola = {
-      codigo: clean,
-      nome: `CÓD. ${clean}`,
-      username: '',
-      ordem: separacaoSacolasRef.current.size + 1,
-      totalAlvo: 1,
-      pecasSeparadas: 0,
-      concluida: false,
-      mercadorias: [],
-      valorTotal: 0,
-      tamanhoSugerido: 'P',
-      startedAt: new Date(),
-    };
-    separacaoSacolasRef.current.set(clean, sacola);
-    return sacola;
+    // 3. código não está na lista de fechamento da tela Acerto — ignora
+    //    (só entram sacolas que existem na live atual)
+    return null;
   };
 
   const adicionarPecaSacola = (codigo: string) => {
@@ -2766,12 +2755,91 @@ export default function App() {
   // ========================================================================
   // COMPONENTE: MODO SEPARAÇÃO DE SACOLAS (PC, tela cheia)
   // ========================================================================
-  const SeparacaoView = () => {
-    const sair = () => {
-      setSeparacaoView(false);
-    };
+  interface SeparacaoViewProps {
+    liveConfig: LiveConfig;
+    separacaoEmAndamento: SeparacaoSacola[];
+    separacaoConcluidas: SeparacaoSacola[];
+    separacaoSacolas: SeparacaoSacola[];
+    separacaoTotalPecas: number;
+    separacaoTotalAlvo: number;
+    separacaoInput: string;
+    setSeparacaoInput: React.Dispatch<React.SetStateAction<string>>;
+    separacaoInputRef: React.RefObject<HTMLInputElement | null>;
+    separacaoSacolaDestacada: string | null;
+    mercadoriaAberta: string | null;
+    setMercadoriaAberta: React.Dispatch<React.SetStateAction<string | null>>;
+    mercadoriaAcima: boolean;
+    setMercadoriaAcima: React.Dispatch<React.SetStateAction<boolean>>;
+    mercadoriaDireita: boolean;
+    setMercadoriaDireita: React.Dispatch<React.SetStateAction<boolean>>;
+    produtosCatalogo: Record<string, string>;
+    separacaoVersao: number;
+    setSeparacaoView: React.Dispatch<React.SetStateAction<boolean>>;
+    adicionarPecaSacola: (codigo: string) => void;
+    removerPecaSacola: (codigo: string) => void;
+  }
 
-    return (
+  // Estado atual do App lido pelo componente estável em cada renderização
+  const separacaoPropsRef = useRef<SeparacaoViewProps | null>(null);
+  separacaoPropsRef.current = {
+    liveConfig,
+    separacaoEmAndamento,
+    separacaoConcluidas,
+    separacaoSacolas,
+    separacaoTotalPecas,
+    separacaoTotalAlvo,
+    separacaoInput,
+    setSeparacaoInput,
+    separacaoInputRef,
+    separacaoSacolaDestacada,
+    mercadoriaAberta,
+    setMercadoriaAberta,
+    mercadoriaAcima,
+    setMercadoriaAcima,
+    mercadoriaDireita,
+    setMercadoriaDireita,
+    produtosCatalogo,
+    separacaoVersao,
+    setSeparacaoView,
+    adicionarPecaSacola,
+    removerPecaSacola,
+  };
+
+  // Identidade estável (useMemo com []): o React atualiza os cards in-place.
+  // Sem isto, a tela inteira era desmontada e remontada a cada clique/tecla
+  // (recriando o backdrop-blur de ponta a ponta), o que atrasava em vários
+  // segundos a atualização da barra de evolução das sacolas.
+  const SeparacaoView = useMemo(
+    () =>
+      function SeparacaoView() {
+        const {
+          liveConfig,
+          separacaoEmAndamento,
+          separacaoConcluidas,
+          separacaoSacolas,
+          separacaoTotalPecas,
+          separacaoTotalAlvo,
+          separacaoInput,
+          setSeparacaoInput,
+          separacaoInputRef,
+          separacaoSacolaDestacada,
+          mercadoriaAberta,
+          setMercadoriaAberta,
+          mercadoriaAcima,
+          setMercadoriaAcima,
+          mercadoriaDireita,
+          setMercadoriaDireita,
+          produtosCatalogo,
+          separacaoVersao,
+          setSeparacaoView,
+          adicionarPecaSacola,
+          removerPecaSacola,
+        } = separacaoPropsRef.current!;
+        const sair = () => {
+          setSeparacaoView(false);
+        };
+
+        return (
       <div className="min-h-screen bg-[#0a0a0a] text-white p-2 font-sans overflow-y-auto">
         {/* Header fixo topo com input integrado */}
         <div className="sticky top-0 z-50 bg-[#111]/95 backdrop-blur-md p-2 rounded-lg border border-[#ccff00]/30 mb-2 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -2816,8 +2884,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Campo digitar sacola - mesmo estilo dos cards */}
-          <div className="mt-1 flex w-full max-w-xs gap-1">
+          {/* Campo digitar sacola - mesma altura dos cards de estatísticas ao lado */}
+          <div className="flex w-full max-w-xs gap-1 self-stretch md:self-stretch">
             <input
               ref={separacaoInputRef}
               autoFocus
@@ -2839,19 +2907,17 @@ export default function App() {
                 }
               }}
               onBlur={() => {
-                if (separacaoView) {
-                  setTimeout(() => separacaoInputRef.current?.focus(), 50);
-                }
+                setTimeout(() => separacaoInputRef.current?.focus(), 50);
               }}
               placeholder="código"
-              className="flex-1 bg-[#111] border border-[#ccff00]/40 rounded p-1.5 text-[11px] font-black text-[#ccff00] outline-none tracking-wider text-center uppercase placeholder-white/10 focus:border-[#ccff00]/60 focus:shadow-[0_0_10px_rgba(204,255,0,0.3)]"
+              className="flex-1 min-w-0 bg-[#111] border border-[#ccff00]/40 rounded px-2 text-[18px] leading-none font-black text-[#ccff00] outline-none tracking-wider text-center uppercase placeholder-white/25 focus:border-[#ccff00]/60 focus:shadow-[0_0_10px_rgba(204,255,0,0.3)]"
             />
             <button
               onClick={() => {
                 adicionarPecaSacola(separacaoInput.trim());
                 setSeparacaoInput('');
               }}
-              className="bg-[#ccff00] text-black font-black text-[9px] px-2 py-1.5 rounded hover:bg-[#ccff00]/90 transition-all uppercase tracking-wider whitespace-nowrap"
+              className="bg-[#ccff00] text-black font-black text-[12px] px-3 rounded hover:bg-[#ccff00]/90 transition-all uppercase tracking-wider whitespace-nowrap"
             >
               OK
             </button>
@@ -2885,6 +2951,9 @@ export default function App() {
                   ? Math.min(100, Math.round((sacola.pecasSeparadas / sacola.totalAlvo) * 100))
                   : 0;
                 const estaDestacada = separacaoSacolaDestacada === sacola.codigo;
+                // Pisca imediatamente enquanto o código digitado bate com a sacola
+                const codigoAtivo = separacaoInput.trim().toUpperCase();
+                const estaPiscando = codigoAtivo.length > 0 && sacola.codigo === codigoAtivo;
 
                 return (
                   <div
@@ -2900,6 +2969,11 @@ export default function App() {
                         sacola.tamanhoSugerido === 'M' ? '#f59e0b' : '#ef4444',
                     }}
                   >
+                    {/* Pisca enquanto o código digitado bate com esta sacola */}
+                    {estaPiscando && (
+                      <div className="pointer-events-none absolute inset-0 z-20 rounded border-2 border-black animate-separacao-pisca" />
+                    )}
+
                     {/* Topo: ícone + código da sacola (esquerda) | posição na fila (direita) */}
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1 min-w-0">
@@ -2948,7 +3022,9 @@ export default function App() {
                         onClick={(e) => {
                           const abrir = mercadoriaAberta !== sacola.codigo;
                           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          const larguraPopup = Math.min(380, window.innerWidth * 0.92);
                           setMercadoriaAcima(rect.bottom + 300 > window.innerHeight);
+                          setMercadoriaDireita(rect.left + larguraPopup > window.innerWidth - 8);
                           setMercadoriaAberta(abrir ? sacola.codigo : null);
                         }}
                         className="flex-1 min-w-0 bg-black text-white text-[8px] font-black px-1 py-1 rounded hover:bg-black/80 transition-all uppercase tracking-wider truncate"
@@ -2980,7 +3056,8 @@ export default function App() {
                         />
                         <div
                           className={cn(
-                            'absolute z-[95] left-0 w-[380px] max-w-[92vw] bg-[#111] border-2 border-[#ccff00] rounded-lg p-3 shadow-2xl text-white',
+                            'absolute z-[95] w-[380px] max-w-[92vw] bg-[#111] border-2 border-[#ccff00] rounded-lg p-3 shadow-2xl text-white',
+                            mercadoriaDireita ? 'right-0' : 'left-0',
                             mercadoriaAcima ? 'bottom-full mb-1' : 'top-full mt-1'
                           )}
                         >
@@ -3106,7 +3183,9 @@ export default function App() {
         )}
       </div>
     );
-  };
+      },
+    []
+  );
 
   function tamanhoLabel(t: 'P' | 'M' | 'G') {
     return t === 'P' ? 'PEQUENA' : t === 'M' ? 'MÉDIA' : 'GRANDE';

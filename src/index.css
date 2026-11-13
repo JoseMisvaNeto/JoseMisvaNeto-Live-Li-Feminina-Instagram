@@ -22,4 +22,13 @@
   .animate-border-pulse-red {
     animation: border-pulse-red 2s infinite ease-in-out;
   }
+
+  /* Pisca do card enquanto o código está sendo digitado no campo de sacola */
+  @keyframes separacao-pisca {
+    0%, 100% { opacity: 1; box-shadow: 0 0 16px 4px rgba(204, 255, 0, 0.75); }
+    50% { opacity: 0.15; box-shadow: 0 0 6px 1px rgba(204, 255, 0, 0.2); }
+  }
+  .animate-separacao-pisca {
+    animation: separacao-pisca 0.55s infinite ease-in-out;
+  }
 }
