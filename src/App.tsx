@@ -45,7 +45,8 @@ import {
   ChevronUp,
   ChevronDown,
   Tag,
-  Scan
+  Scan,
+  ListOrdered
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -263,7 +264,7 @@ const safeFormatDate = (dateStr: string | undefined | null) => {
 };
 
 // Chaves do localStorage que são por-live (namespaced por data_live)
-const LIVE_LS_BASES = ['purchases', 'sentMessages', 'sentWhatsappMessages', 'shoppingList', 'timeline', 'manualPaidIds', 'deliveredIds'] as const;
+const LIVE_LS_BASES = ['purchases', 'sentMessages', 'sentWhatsappMessages', 'shoppingList', 'timeline', 'manualPaidIds', 'deliveredIds', 'separacao'] as const;
 
 const getInitialLiveDate = (): string => {
   try {
@@ -1211,7 +1212,13 @@ export default function App() {
   const [separacaoSacolaDestacada, setSeparacaoSacolaDestacada] = useState<string | null>(null);
   const separacaoSacolasRef = useRef<Map<string, SeparacaoSacola>>(new Map());
   const separacaoInputRef = useRef<HTMLInputElement | null>(null);
-  const [sacolasExpandidas, setSacolasExpandidas] = useState<Set<string>>(new Set());
+  // Popup de mercadorias (explodido, não empurra os cards)
+  const [mercadoriaAberta, setMercadoriaAberta] = useState<string | null>(null);
+  const [mercadoriaAcima, setMercadoriaAcima] = useState(false);
+  // Incrementado ao restaurar do localStorage para forçar a re-renderização da grade
+  const [separacaoVersao, setSeparacaoVersao] = useState(0);
+  // Catálogo de produtos (referência -> nome) para exibir nas mercadorias
+  const [produtosCatalogo, setProdutosCatalogo] = useState<Record<string, string>>({});
 
   interface SeparacaoSacola {
     codigo: string;
@@ -1248,7 +1255,7 @@ export default function App() {
       } else {
         mapa.set(chave, {
           referencia: String(it.reference),
-          descricao: chave,
+          descricao: produtosCatalogo[chave.toUpperCase().trim()] || chave,
           preco: Number(it.value),
           quantidade: Number(it.quantity),
         });
@@ -1313,22 +1320,28 @@ export default function App() {
   };
 
   const adicionarPecaSacola = (codigo: string) => {
-    const sacola = buscarSacolaPorCodigo(codigo);
+    const clean = codigo.trim().toUpperCase();
+    if (!clean) return;
+    const sacola = buscarSacolaPorCodigo(clean);
     if (!sacola) return;
     sacola.pecasSeparadas += 1;
     if (sacola.pecasSeparadas >= sacola.totalAlvo) sacola.concluida = true;
-    separacaoSacolasRef.current.set(codigo, sacola);
-    setSeparacaoSacolaDestacada(codigo);
+    separacaoSacolasRef.current.set(sacola.codigo, sacola);
+    setSeparacaoSacolaDestacada(sacola.codigo);
     setSeparacaoInput('');
+    if (sacola.concluida) setMercadoriaAberta(null);
+    salvarSeparacaoLS();
   };
 
   const removerPecaSacola = (codigo: string) => {
-    const sacola = separacaoSacolasRef.current.get(codigo);
+    const clean = codigo.trim().toUpperCase();
+    const sacola = separacaoSacolasRef.current.get(clean);
     if (!sacola || sacola.pecasSeparadas <= 0) return;
     sacola.pecasSeparadas -= 1;
     sacola.concluida = false;
-    separacaoSacolasRef.current.set(codigo, sacola);
-    setSeparacaoSacolaDestacada(codigo);
+    separacaoSacolasRef.current.set(clean, sacola);
+    setSeparacaoSacolaDestacada(clean);
+    salvarSeparacaoLS();
   };
 
   const separacaoSacolas: SeparacaoSacola[] = [
@@ -1339,6 +1352,57 @@ export default function App() {
   const separacaoConcluidas = separacaoSacolas.filter(s => s.concluida);
   const separacaoTotalPecas = separacaoSacolas.reduce((s, s2) => s + s2.pecasSeparadas, 0);
   const separacaoTotalAlvo = separacaoSacolas.reduce((s, s2) => s + s2.totalAlvo, 0);
+
+  // Persistência LOCAL (localStorage por live) do progresso da separação.
+  // Nada disso vai para o banco — é apenas para a tela não zerar ao fechar/recarregar.
+  const salvarSeparacaoLS = () => {
+    try {
+      localStorage.setItem(
+        `separacao@${dataLive}`,
+        JSON.stringify([...separacaoSacolasRef.current.values()])
+      );
+    } catch (err) {
+      console.warn('Separação: não foi possível salvar no localStorage', err);
+    }
+  };
+
+  // Ao trocar de live (ou recarregar a página), restaura o progresso salvo daquela live
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`separacao@${dataLive}`);
+      const arr = raw ? (JSON.parse(raw) as SeparacaoSacola[]) : [];
+      separacaoSacolasRef.current = new Map(
+        arr
+          .filter(s => s && s.codigo)
+          .map(s => [s.codigo, { ...s, startedAt: new Date(s.startedAt) }])
+      );
+    } catch (err) {
+      console.warn('Separação: não foi possível restaurar do localStorage', err);
+      separacaoSacolasRef.current = new Map();
+    }
+    setSeparacaoSacolaDestacada(null);
+    setMercadoriaAberta(null);
+    setSeparacaoInput('');
+    setSeparacaoVersao((v) => v + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLive]);
+
+  // Catálogo de produtos (referência -> nome) usado no popup de mercadorias
+  useEffect(() => {
+    let ativo = true;
+    api.getProdutos()
+      .then((ps) => {
+        if (!ativo) return;
+        const mapa: Record<string, string> = {};
+        (ps || []).forEach((p) => {
+          const ref = (p.referencia || '').toUpperCase().trim();
+          if (ref && p.descricao) mapa[ref] = p.descricao;
+        });
+        setProdutosCatalogo(mapa);
+      })
+      .catch(() => { /* catálogo indisponível: mostra a referência como nome */ });
+    return () => { ativo = false; };
+  }, []);
 
   // "Quanto já comprou na live": R$ dos itens lançados + peças declaradas (qtd_live)
   // e quanto falta para o mínimo de compra configurado
@@ -2766,7 +2830,13 @@ export default function App() {
                     adicionarPecaSacola(separacaoInput.trim());
                   }
                 }
-                if (e.key === 'Escape') sair();
+                if (e.key === 'Escape') {
+                  if (mercadoriaAberta) {
+                    setMercadoriaAberta(null);
+                    return;
+                  }
+                  sair();
+                }
               }}
               onBlur={() => {
                 if (separacaoView) {
@@ -2789,14 +2859,15 @@ export default function App() {
         </div>
 
         {/* Grid de sacolas em andamento */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-black text-[#ccff00] uppercase tracking-wider">
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-xs font-black text-[#ccff00] uppercase tracking-wider">
               Em separação ({separacaoEmAndamento.length})
             </h2>
           </div>
 
           <div
+            key={`separacao-grid-${separacaoVersao}`}
             className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-1"
           >
             {separacaoEmAndamento.length === 0 ? (
@@ -2814,13 +2885,6 @@ export default function App() {
                   ? Math.min(100, Math.round((sacola.pecasSeparadas / sacola.totalAlvo) * 100))
                   : 0;
                 const estaDestacada = separacaoSacolaDestacada === sacola.codigo;
-                const tamanhoCor =
-                  sacola.tamanhoSugerido === 'P' ? 'bg-[#22c55e]/20 text-[#22c55e]' :
-                  sacola.tamanhoSugerido === 'M' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' :
-                  'bg-[#ef4444]/20 text-[#ef4444]';
-                const tamanhoLabel =
-                  sacola.tamanhoSugerido === 'P' ? 'PEQUENA' :
-                  sacola.tamanhoSugerido === 'M' ? 'MÉDIA' : 'GRANDE';
 
                 return (
                   <div
@@ -2836,33 +2900,41 @@ export default function App() {
                         sacola.tamanhoSugerido === 'M' ? '#f59e0b' : '#ef4444',
                     }}
                   >
-                    {/* Número da fila (topo esquerda) */}
-                    <div className="absolute -top-1 -left-1 bg-black text-[#ccff00] font-black text-[10px] font-bold px-1.5 py-0.5 rounded shadow-lg z-10">
-                      #{sacola.ordem}
+                    {/* Topo: ícone + código da sacola (esquerda) | posição na fila (direita) */}
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <ShoppingBag className="w-4 h-4 shrink-0 text-black/75" />
+                        <span className="text-3xl font-black uppercase leading-none truncate">
+                          {sacola.codigo}
+                        </span>
+                      </div>
+                      <span
+                        className="flex items-center gap-0.5 bg-black rounded px-1 py-0.5 shrink-0"
+                        title={`Posição ${sacola.ordem} da fila`}
+                      >
+                        <ListOrdered className="w-4 h-4 text-[#ccff00]" />
+                        <span className="text-3xl font-black leading-none text-[#ccff00]">
+                          {sacola.ordem}
+                        </span>
+                      </span>
                     </div>
 
-                    {/* Código da sacola - dobro do tamanho */}
-                    <div className="mt-1 text-3xl font-black uppercase leading-none mb-0.5">
-                      {sacola.codigo}
-                    </div>
-
-                    {/* Nome do cliente - branco sobre cor */}
-                    <div className="text-white font-bold text-xs leading-none truncate">
+                    {/* Cliente: nome + @usuario na mesma linha */}
+                    <div className="mt-0.5 text-black font-black text-[10px] leading-tight truncate">
                       {sacola.nome}
+                      {sacola.username && (
+                        <span className="text-black/65 font-bold">
+                          {' '}@{sacola.username.replace(/^@/, '')}
+                        </span>
+                      )}
                     </div>
-                    {sacola.username && (
-                      <div className="text-white/80 text-[8px] font-mono uppercase tracking-wider mt-0.5">
-                        @{sacola.username.replace(/^@/, '')}
-                      </div>
-                    )}
 
-                    {/* Barra de evolução */}
-                    <div className="mt-1">
-                      <div className="flex justify-between text-[8px] font-black uppercase tracking-wider mb-0.5">
-                        <span className="text-black/60">{sacola.pecasSeparadas}</span>
-                        <span className="text-black">{sacola.totalAlvo}</span>
-                      </div>
-                      <div className="h-1 bg-black/30 rounded-full overflow-hidden">
+                    {/* Progresso em uma linha só */}
+                    <div className="mt-1 flex items-center gap-1">
+                      <span className="text-[9px] font-black text-black/70 tabular-nums whitespace-nowrap">
+                        {sacola.pecasSeparadas}/{sacola.totalAlvo}
+                      </span>
+                      <div className="flex-1 h-1 bg-black/30 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all duration-300 ${pct >= 100 ? 'bg-[#22c55e]' : 'bg-[#ccff00]'}`}
                           style={{ width: `${pct}%` }}
@@ -2870,63 +2942,106 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Mercadorias - expandir */}
-                    <div className="mt-1">
-                      <button
-                        onClick={() => {
-                          setSacolasExpandidas(prev => {
-                            const next = new Set(prev);
-                            if (next.has(sacola.codigo)) next.delete(sacola.codigo);
-                            else next.add(sacola.codigo);
-                            return next;
-                          });
-                        }}
-                        className="w-full bg-black/20 border border-white/10 text-[8px] font-black text-white px-1 py-0.5 rounded hover:bg-white/30 hover:text-white transition-all uppercase tracking-wider"
-                      >
-                        {sacolasExpandidas.has(sacola.codigo) ? '▼ ocultar' : '▲ ver mercadorias'}
-                      </button>
-                      {sacolasExpandidas.has(sacola.codigo) && sacola.mercadorias.length > 0 && (
-                        <div className="mt-0.5 space-y-0.5">
-                          {sacola.mercadorias.map((m) => (
-                            <div
-                              key={m.referencia}
-                              className="flex justify-between items-center text-[8px] font-mono text-white bg-black/30 px-1 py-0.5 rounded border border-white/10"
-                            >
-                              <span className="truncate max-w-[70px]">{m.descricao}</span>
-                              <span className="text-[#ccff00]">x{m.quantidade}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {sacolasExpandidas.has(sacola.codigo) && sacola.mercadorias.length === 0 && (
-                        <div className="mt-1 text-[9px] text-white/40 font-mono italic bg-[#1a1a1a] px-1 py-0.5 rounded border border-white/5">
-                          Sem mercadorias mapeadas
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Ações rápidas */}
+                    {/* Ações em uma linha só (mercadorias | +1 | desfazer) */}
                     <div className="mt-1 flex gap-0.5">
+                      <button
+                        onClick={(e) => {
+                          const abrir = mercadoriaAberta !== sacola.codigo;
+                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          setMercadoriaAcima(rect.bottom + 300 > window.innerHeight);
+                          setMercadoriaAberta(abrir ? sacola.codigo : null);
+                        }}
+                        className="flex-1 min-w-0 bg-black text-white text-[8px] font-black px-1 py-1 rounded hover:bg-black/80 transition-all uppercase tracking-wider truncate"
+                      >
+                        {mercadoriaAberta === sacola.codigo ? '▼ ocultar' : '▲ mercadorias'}
+                      </button>
                       <button
                         onClick={() => adicionarPecaSacola(sacola.codigo)}
                         disabled={pct >= 100}
-                        className="flex-1 bg-[#1a1a1a] border border-[#ccff00]/40 text-[#ccff00] text-xs font-black px-2 py-1.5 rounded hover:bg-[#ccff00]/20 disabled:opacity-50 disabled:text-white/40 transition-all uppercase tracking-wider"
+                        className="bg-black text-[#ccff00] text-[8px] font-black px-2 py-1 rounded hover:bg-black/80 disabled:opacity-40 transition-all"
                       >
                         +1
                       </button>
                       <button
                         onClick={() => removerPecaSacola(sacola.codigo)}
-                        className="w-8 h-8 bg-[#1a1a1a] border bg-black/20 border border-white/10 text-red-900 text-[8px] font-black rounded hover:bg-white/30 transition-all"
+                        className="w-6 h-6 shrink-0 bg-black text-red-400 font-black rounded hover:bg-black/80 transition-all flex items-center justify-center"
                         title="Desfazer última peça"
                       >
-                        <X className="w-2 h-2" />
+                        <X className="w-2.5 h-2.5" />
                       </button>
                     </div>
 
-                    {pct >= 100 && (
-                      <div className="mt-1 bg-black border border-[#ccff00] text-[#ccff00] text-[8px] font-black px-1 py-0.5 rounded uppercase tracking-wider text-center animate-bounce">
-                        ✓ FECHADA
-                      </div>
+                    {/* Popup de mercadorias - explodido (não empurra os cards de lugar) */}
+                    {mercadoriaAberta === sacola.codigo && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-[90] bg-black/60"
+                          onClick={() => setMercadoriaAberta(null)}
+                        />
+                        <div
+                          className={cn(
+                            'absolute z-[95] left-0 w-[380px] max-w-[92vw] bg-[#111] border-2 border-[#ccff00] rounded-lg p-3 shadow-2xl text-white',
+                            mercadoriaAcima ? 'bottom-full mb-1' : 'top-full mt-1'
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="text-[11px] font-black text-[#ccff00] uppercase tracking-wider truncate">
+                              Mercadorias · Sacola {sacola.codigo}
+                            </div>
+                            <button
+                              onClick={() => setMercadoriaAberta(null)}
+                              className="w-5 h-5 shrink-0 rounded bg-white/10 hover:bg-white/20 flex items-center justify-center"
+                              title="Fechar"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+
+                          {sacola.mercadorias.length > 0 ? (
+                            <div className="space-y-1">
+                              <div className="grid grid-cols-[56px_44px_1fr] gap-2 text-[9px] font-black text-white/40 uppercase tracking-wider border-b border-white/10 pb-1">
+                                <span>Ref</span>
+                                <span className="text-center">Qtd</span>
+                                <span>Nome</span>
+                              </div>
+                              {sacola.mercadorias.map((m) => {
+                                const nomeProduto =
+                                  produtosCatalogo[m.referencia.toUpperCase().trim()] ||
+                                  (m.descricao !== m.referencia ? m.descricao : '—');
+                                return (
+                                  <div
+                                    key={m.referencia}
+                                    className="grid grid-cols-[56px_44px_1fr] gap-2 items-center text-[12px]"
+                                  >
+                                    <span className="font-black text-[#ccff00] truncate">
+                                      {m.referencia}
+                                    </span>
+                                    <span className="font-black text-center bg-white/10 rounded py-0.5">
+                                      {m.quantidade}
+                                    </span>
+                                    <span className="truncate text-white/90" title={nomeProduto}>
+                                      {nomeProduto}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-white/50 italic">
+                              Sem mercadorias mapeadas para esta sacola
+                            </div>
+                          )}
+
+                          <div className="flex justify-between mt-2 pt-2 border-t border-white/10 text-[10px] font-black uppercase tracking-wider">
+                            <span className="text-white/60">
+                              {sacola.mercadorias.reduce((s, m) => s + m.quantidade, 0)} peças
+                            </span>
+                            <span className="text-[#22c55e]">
+                              R$ {sacola.valorTotal.toFixed(2).replace('.', ',')}
+                            </span>
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 );
