@@ -2708,55 +2708,52 @@ export default function App() {
     };
 
     return (
-      <div className="min-h-screen bg-[#0a0a0a] text-white p-6 font-sans overflow-y-auto">
+      <div className="min-h-screen bg-[#0a0a0a] text-white p-2 font-sans overflow-y-auto">
         {/* Header fixo topo com input integrado */}
-        <div className="sticky top-0 z-50 bg-[#111]/90 backdrop-blur-md p-3 rounded-xl border border-[#ccff00]/30 mb-4 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="sticky top-0 z-50 bg-[#111]/95 backdrop-blur-md p-2 rounded-lg border border-[#ccff00]/30 mb-2 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
             <button
               onClick={sair}
-              className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-white/10 flex items-center justify-center hover:bg-white/5 transition-all text-white/70 hover:text-white"
+              className="w-7 h-7 rounded bg-[#1a1a1a] border border-white/10 flex items-center justify-center hover:bg-white/5 transition-all text-white/70 hover:text-white"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3 h-3" />
             </button>
             <div>
-              <h1 className="text-xl font-black tracking-tight text-[#ccff00] uppercase leading-none">
+              <h1 className="text-lg font-black tracking-tight text-[#ccff00] uppercase leading-none">
                 Separação de Sacolas
               </h1>
-              <p className="text-[10px] text-white/40 uppercase tracking-wider font-mono leading-none">
+              <p className="text-[9px] text-white/40 uppercase tracking-wider font-mono leading-none">
                 Live {liveConfig.date} · PC · peça por peça
               </p>
             </div>
           </div>
 
-          {/* Estatísticas compactas */}
-          <div className="flex gap-2 flex-wrap">
-            <div className="bg-[#1a1a1a] border border-[#ccff00]/40 p-2 rounded-lg min-w-[120px]">
-              <div className="text-[9px] text-[#ccff00]/60 font-black uppercase tracking-wider mb-0.5">
+          {/* Estatísticas ultra compactas */}
+          <div className="flex gap-1 flex-wrap">
+            <div className="bg-[#1a1a1a] border border-[#ccff00]/40 p-1 rounded-lg min-w-[80px]">
+              <div className="text-[8px] text-[#ccff00]/60 font-black uppercase tracking-wider mb-0.5">
                 Em andamento
               </div>
-              <div className="text-xl font-black text-white">{separacaoEmAndamento.length}</div>
+              <div className="text-sm font-black text-white">{separacaoEmAndamento.length}</div>
             </div>
-            <div className="bg-[#1a1a1a] border border-[#22c55e]/40 p-2 rounded-lg min-w-[120px]">
-              <div className="text-[9px] text-[#22c55e]/60 font-black uppercase tracking-wider mb-0.5">
+            <div className="bg-[#1a1a1a] border border-[#22c55e]/40 p-1 rounded-lg min-w-[80px]">
+              <div className="text-[8px] text-[#22c55e]/60 font-black uppercase tracking-wider mb-0.5">
                 Concluídas
               </div>
-              <div className="text-xl font-black text-[#22c55e]">{separacaoConcluidas.length}</div>
+              <div className="text-sm font-black text-[#22c55e]">{separacaoConcluidas.length}</div>
             </div>
-            <div className="bg-[#1a1a1a] border border-[#f59e0b]/40 p-2 rounded-lg min-w-[140px]">
-              <div className="text-[9px] text-[#f59e0b]/60 font-black uppercase tracking-wider mb-0.5">
+            <div className="bg-[#1a1a1a] border border-[#f59e0b]/40 p-1 rounded-lg min-w-[90px]">
+              <div className="text-[8px] text-[#f59e0b]/60 font-black uppercase tracking-wider mb-0.5">
                 Peças separadas
               </div>
-              <div className="text-xl font-black text-[#f59e0b]">
+              <div className="text-sm font-black text-[#f59e0b]">
                 {separacaoTotalPecas} / {separacaoTotalAlvo}
               </div>
             </div>
           </div>
 
-          {/* Input de código integrado na barra superior */}
-          <div className="mt-2 flex w-full max-w-md md:max-w-lg gap-1">
-            <span className="text-[9px] text-white/30 font-mono uppercase tracking-wider mt-0.5 whitespace-nowrap">
-              Código:
-            </span>
+          {/* Campo digitar sacola - mesmo estilo dos cards */}
+          <div className="mt-1 flex w-full max-w-xs gap-1">
             <input
               ref={separacaoInputRef}
               autoFocus
@@ -2776,39 +2773,31 @@ export default function App() {
                   setTimeout(() => separacaoInputRef.current?.focus(), 50);
                 }
               }}
-              placeholder="Ex: 4"
-              className="flex-1 bg-[#0a0a0a] border border-[#ccff00]/30 rounded text-[14px] font-black text-[#ccff00] outline-none px-3 py-1.5 tracking-wider text-center placeholder-white/10 uppercase focus:border-[#ccff00]"
+              placeholder="código"
+              className="flex-1 bg-[#111] border border-[#ccff00]/40 rounded p-1.5 text-[11px] font-black text-[#ccff00] outline-none tracking-wider text-center uppercase placeholder-white/10 focus:border-[#ccff00]/60 focus:shadow-[0_0_10px_rgba(204,255,0,0.3)]"
             />
             <button
               onClick={() => {
                 adicionarPecaSacola(separacaoInput.trim());
                 setSeparacaoInput('');
               }}
-              className="bg-[#ccff00] text-black font-black text-[10px] px-3 py-1.5 rounded hover:bg-[#ccff00]/90 transition-all uppercase tracking-wider whitespace-nowrap"
+              className="bg-[#ccff00] text-black font-black text-[9px] px-2 py-1.5 rounded hover:bg-[#ccff00]/90 transition-all uppercase tracking-wider whitespace-nowrap"
             >
-              Add
+              OK
             </button>
           </div>
-          <p className="text-[8px] text-white/20 mt-1 font-mono uppercase tracking-wider text-center">
-            Enter = +1 peça · Código novo = inicia sacola · ESC = sair
-          </p>
         </div>
 
         {/* Grid de sacolas em andamento */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-black text-[#ccff00] uppercase tracking-wider">
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-black text-[#ccff00] uppercase tracking-wider">
               Em separação ({separacaoEmAndamento.length})
             </h2>
-            {separacaoEmAndamento.length > 0 && (
-              <span className="text-[10px] text-white/40 font-mono uppercase tracking-wider">
-                Ordem de início da fila
-              </span>
-            )}
           </div>
 
           <div
-            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2"
+            className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-1"
           >
             {separacaoEmAndamento.length === 0 ? (
               <div className="col-span-full bg-[#111] border border-white/10 rounded-2xl p-12 text-center">
@@ -2837,40 +2826,43 @@ export default function App() {
                   <div
                     key={sacola.codigo}
                     className={cn(
-                      'relative group bg-[#111] border rounded-lg p-2.5 transition-all duration-200',
-                          estaDestacada
-                            ? 'border-[#ccff00]/70 shadow-[0_0_15px_rgba(204,255,0,0.2)] bg-[#1a1a1a]'
-                            : 'border-white/5 hover:border-[#ccff00]/50 hover:bg-white/3'
-                      )
-                    }
+                      'relative group border rounded p-1 transition-all duration-200 text-black',
+                      estaDestacada
+                        ? 'ring-2 ring-[#ccff00] shadow-[0_0_12px_rgba(204,255,0,0.4)]'
+                        : 'border-[#333] hover:border-[#ccff00]/50'
+                    )}
+                    style={{
+                      backgroundColor: sacola.tamanhoSugerido === 'P' ? '#22c55e' :
+                        sacola.tamanhoSugerido === 'M' ? '#f59e0b' : '#ef4444',
+                    }}
                   >
                     {/* Número da fila (topo esquerda) */}
-                    <div className="absolute -top-1 -left-1 bg-[#ccff00] text-black font-black text-[11px] font-bold px-2 py-0.5 rounded shadow-lg z-10">
+                    <div className="absolute -top-1 -left-1 bg-black text-[#ccff00] font-black text-[10px] font-bold px-1.5 py-0.5 rounded shadow-lg z-10">
                       #{sacola.ordem}
                     </div>
 
-                    {/* Código grande */}
-                    <div className="mt-1 text-2xl font-black text-[#ccff00] tracking-tighter uppercase">
+                    {/* Código da sacola - dobro do tamanho */}
+                    <div className="mt-1 text-3xl font-black uppercase leading-none mb-0.5">
                       {sacola.codigo}
                     </div>
 
-                    {/* Nome do cliente */}
-                    <div className="text-white/80 font-bold text-xs mt-0.5 leading-none truncate">
+                    {/* Nome do cliente - branco sobre cor */}
+                    <div className="text-white font-bold text-xs leading-none truncate">
                       {sacola.nome}
                     </div>
                     {sacola.username && (
-                      <div className="text-[9px] text-[#00ffff]/50 font-mono uppercase tracking-wider mt-0.5">
+                      <div className="text-white/80 text-[8px] font-mono uppercase tracking-wider mt-0.5">
                         @{sacola.username.replace(/^@/, '')}
                       </div>
                     )}
 
                     {/* Barra de evolução */}
-                    <div className="mt-2">
-                      <div className="flex justify-between text-[9px] font-black uppercase tracking-wider mb-0.5">
-                        <span className="text-white/40">{sacola.pecasSeparadas}</span>
-                        <span className="text-[#ccff00]">{sacola.totalAlvo}</span>
+                    <div className="mt-1">
+                      <div className="flex justify-between text-[8px] font-black uppercase tracking-wider mb-0.5">
+                        <span className="text-black/60">{sacola.pecasSeparadas}</span>
+                        <span className="text-black">{sacola.totalAlvo}</span>
                       </div>
-                      <div className="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden border border-white/10">
+                      <div className="h-1 bg-black/30 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all duration-300 ${pct >= 100 ? 'bg-[#22c55e]' : 'bg-[#ccff00]'}`}
                           style={{ width: `${pct}%` }}
@@ -2878,13 +2870,8 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Tamanho sugerido */}
-                    <div className={`mt-1.5 inline-block px-1 py-0.5 rounded text-[9px] font-black uppercase tracking-wider border ${tamanhoCor}`}>
-                      SACOLA {tamanhoLabel}
-                    </div>
-
                     {/* Mercadorias - expandir */}
-                    <div className="mt-2">
+                    <div className="mt-1">
                       <button
                         onClick={() => {
                           setSacolasExpandidas(prev => {
@@ -2894,18 +2881,18 @@ export default function App() {
                             return next;
                           });
                         }}
-                        className="w-full bg-[#1a1a1a] border border-white/10 text-[9px] font-black text-white/60 px-1.5 py-0.5 rounded hover:bg-white/5 hover:text-[#ccff00] hover:border-[#ccff00]/50 transition-all uppercase tracking-wider"
+                        className="w-full bg-black/20 border border-white/10 text-[8px] font-black text-white px-1 py-0.5 rounded hover:bg-white/30 hover:text-white transition-all uppercase tracking-wider"
                       >
-                        {sacolasExpandidas.has(sacola.codigo) ? '▼ ocultar mercadorias' : '▲ ver mercadorias'}
+                        {sacolasExpandidas.has(sacola.codigo) ? '▼ ocultar' : '▲ ver mercadorias'}
                       </button>
                       {sacolasExpandidas.has(sacola.codigo) && sacola.mercadorias.length > 0 && (
-                        <div className="mt-1 space-y-0.5">
+                        <div className="mt-0.5 space-y-0.5">
                           {sacola.mercadorias.map((m) => (
                             <div
                               key={m.referencia}
-                              className="flex justify-between items-center text-[9px] font-mono text-white/60 bg-[#1a1a1a] px-1 py-0.5 rounded border border-white/5"
+                              className="flex justify-between items-center text-[8px] font-mono text-white bg-black/30 px-1 py-0.5 rounded border border-white/10"
                             >
-                              <span className="truncate max-w-[80px]">{m.descricao}</span>
+                              <span className="truncate max-w-[70px]">{m.descricao}</span>
                               <span className="text-[#ccff00]">x{m.quantidade}</span>
                             </div>
                           ))}
@@ -2919,7 +2906,7 @@ export default function App() {
                     </div>
 
                     {/* Ações rápidas */}
-                    <div className="mt-2 flex gap-1">
+                    <div className="mt-1 flex gap-0.5">
                       <button
                         onClick={() => adicionarPecaSacola(sacola.codigo)}
                         disabled={pct >= 100}
@@ -2929,15 +2916,15 @@ export default function App() {
                       </button>
                       <button
                         onClick={() => removerPecaSacola(sacola.codigo)}
-                        className="w-8 h-8 bg-[#1a1a1a] border border-red-500/30 text-red-500 text-xs font-black rounded hover:bg-red-500/20 transition-all"
+                        className="w-8 h-8 bg-[#1a1a1a] border bg-black/20 border border-white/10 text-red-900 text-[8px] font-black rounded hover:bg-white/30 transition-all"
                         title="Desfazer última peça"
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-2 h-2" />
                       </button>
                     </div>
 
                     {pct >= 100 && (
-                      <div className="mt-2 bg-[#22c55e]/10 border border-[#22c55e]/30 text-[#22c55e] text-[9px] font-black px-2 py-1 rounded uppercase tracking-wider text-center animate-bounce">
+                      <div className="mt-1 bg-black border border-[#ccff00] text-[#ccff00] text-[8px] font-black px-1 py-0.5 rounded uppercase tracking-wider text-center animate-bounce">
                         ✓ FECHADA
                       </div>
                     )}
