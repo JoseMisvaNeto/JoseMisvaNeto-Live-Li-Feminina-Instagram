@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api, isDbId } from './lib/api';
+import { classificarSacola } from './utils/classificarSacola';
 import { 
   Search, 
   ShoppingBag, 
@@ -1218,6 +1219,17 @@ export default function App() {
   const [mercadoriaDireita, setMercadoriaDireita] = useState(false);
   // Incrementado ao restaurar do localStorage para forçar a re-renderização da grade
   const [separacaoVersao, setSeparacaoVersao] = useState(0);
+  // Tick de re-render: incrementa a cada +1/X para vencer o "bailout" do React
+  // (sem isto, clique repetido na mesma sacola não mudava estado nenhum e a
+  //  atualização só chegava no polling de 15s — era o delay dos botões)
+  const [separacaoTick, setSeparacaoTick] = useState(0);
+  // Aviso central de "sacola concluída" (5s ou fechado pelo operador)
+  const [separacaoAviso, setSeparacaoAviso] = useState<{
+    id: number; // identidade: reinicia animação e contador em avisos consecutivos
+    codigo: string;
+    total: number;
+    pecas: number;
+  } | null>(null);
   // Catálogo de produtos (referência -> nome) para exibir nas mercadorias
   const [produtosCatalogo, setProdutosCatalogo] = useState<Record<string, string>>({});
 
@@ -1231,19 +1243,9 @@ export default function App() {
     concluida: boolean;
     mercadorias: { referencia: string; descricao: string; preco: number; quantidade: number }[];
     valorTotal: number;
-    tamanhoSugerido: 'P' | 'M' | 'G';
+    tamanhoSugerido: 'P' | 'G';
     startedAt: Date;
   }
-
-  const sugerirTamanho = (qtd: number, mercadorias: SeparacaoSacola['mercadorias']): 'P' | 'M' | 'G' => {
-    const palavrasGrandes = ['casaco', 'vestido', 'blazer', 'jaqueta', 'saia longa', 'calça'];
-    const temGrande = mercadorias.some(m =>
-      palavrasGrandes.some(p => m.descricao.toLowerCase().includes(p))
-    );
-    if (qtd >= 8 || temGrande) return 'G';
-    if (qtd >= 3) return 'M';
-    return 'P';
-  };
 
   const agruparMercadoriasSacola = (customerId: number) => {
     const itens = purchases.filter(p => Number(p.customerId) === customerId);
@@ -1293,10 +1295,8 @@ export default function App() {
         concluida: false,
         mercadorias,
         valorTotal: mercadorias.reduce((s, m) => s + m.preco * m.quantidade, 0),
-        tamanhoSugerido: sugerirTamanho(
-          mercadorias.reduce((s, m) => s + m.quantidade, 0),
-          mercadorias
-        ),
+        // Cor calculada UMA vez na criação da sacola (congelada)
+        tamanhoSugerido: classificarSacola(mercadorias),
         startedAt: new Date(),
       };
       separacaoSacolasRef.current.set(clean, sacola);
@@ -1313,12 +1313,25 @@ export default function App() {
     if (!clean) return;
     const sacola = buscarSacolaPorCodigo(clean);
     if (!sacola) return;
+    const estavaConcluida = sacola.concluida;
     sacola.pecasSeparadas += 1;
     if (sacola.pecasSeparadas >= sacola.totalAlvo) sacola.concluida = true;
     separacaoSacolasRef.current.set(sacola.codigo, sacola);
     setSeparacaoSacolaDestacada(sacola.codigo);
     setSeparacaoInput('');
-    if (sacola.concluida) setMercadoriaAberta(null);
+    setSeparacaoTick((v) => v + 1); // re-render imediato do card (+1/X)
+    if (sacola.concluida) {
+      setMercadoriaAberta(null);
+      // Aviso central só na transição para concluída (evita repetir em +1 extra)
+      if (!estavaConcluida) {
+        setSeparacaoAviso({
+          id: Date.now(),
+          codigo: sacola.codigo,
+          total: sacola.totalAlvo,
+          pecas: sacola.pecasSeparadas,
+        });
+      }
+    }
     salvarSeparacaoLS();
   };
 
@@ -1330,6 +1343,7 @@ export default function App() {
     sacola.concluida = false;
     separacaoSacolasRef.current.set(clean, sacola);
     setSeparacaoSacolaDestacada(clean);
+    setSeparacaoTick((v) => v + 1); // re-render imediato do card (+1/X)
     salvarSeparacaoLS();
   };
 
@@ -1355,6 +1369,13 @@ export default function App() {
     }
   };
 
+  // Aviso de "sacola concluída": fecha sozinho após 5 segundos
+  useEffect(() => {
+    if (!separacaoAviso) return;
+    const t = setTimeout(() => setSeparacaoAviso(null), 5000);
+    return () => clearTimeout(t);
+  }, [separacaoAviso]);
+
   // Ao trocar de live (ou recarregar a página), restaura o progresso salvo daquela live
   useEffect(() => {
     try {
@@ -1363,7 +1384,16 @@ export default function App() {
       separacaoSacolasRef.current = new Map(
         arr
           .filter(s => s && s.codigo)
-          .map(s => [s.codigo, { ...s, startedAt: new Date(s.startedAt) }])
+          .map(s => [
+            s.codigo,
+            {
+              ...s,
+              startedAt: new Date(s.startedAt),
+              // Normaliza sacolas salvas com regras antigas (P/M/G) para as
+              // duas cores atuais, reclassificando pelas mercadorias salvas
+              tamanhoSugerido: classificarSacola(s.mercadorias || []),
+            },
+          ])
       );
     } catch (err) {
       console.warn('Separação: não foi possível restaurar do localStorage', err);
@@ -2965,8 +2995,7 @@ export default function App() {
                         : 'border-[#333] hover:border-[#ccff00]/50'
                     )}
                     style={{
-                      backgroundColor: sacola.tamanhoSugerido === 'P' ? '#22c55e' :
-                        sacola.tamanhoSugerido === 'M' ? '#f59e0b' : '#ef4444',
+                      backgroundColor: sacola.tamanhoSugerido === 'G' ? '#f59e0b' : '#22c55e',
                     }}
                   >
                     {/* Pisca enquanto o código digitado bate com esta sacola */}
@@ -3187,8 +3216,8 @@ export default function App() {
     []
   );
 
-  function tamanhoLabel(t: 'P' | 'M' | 'G') {
-    return t === 'P' ? 'PEQUENA' : t === 'M' ? 'MÉDIA' : 'GRANDE';
+  function tamanhoLabel(t: 'P' | 'G') {
+    return t === 'G' ? 'TAM G' : 'TAM P';
   }
 
   return (
@@ -5914,6 +5943,48 @@ export default function App() {
       {separacaoView && (
         <div className="fixed inset-0 z-[100] bg-[#0a0a0a]/98 backdrop-blur-md">
           <SeparacaoView />
+
+          {/* Aviso central de sacola concluída (5s ou fechado pelo operador).
+              Backdrop sem bloqueio: o operador pode seguir trabalhando. */}
+          {separacaoAviso && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 pointer-events-none">
+              <div
+                key={separacaoAviso.id}
+                className="pointer-events-auto w-full max-w-md bg-[#0d1a0d] border-4 border-[#22c55e] rounded-3xl p-8 text-center shadow-[0_0_80px_rgba(34,197,94,0.55)] animate-separacao-aviso"
+              >
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <CheckCircle2 className="w-7 h-7 text-[#22c55e]" />
+                  <span className="text-[#22c55e] text-sm font-black uppercase tracking-[0.25em]">
+                    Sacola concluída
+                  </span>
+                </div>
+
+                <div className="text-white text-8xl font-black leading-none mb-2">
+                  {separacaoAviso.codigo}
+                </div>
+
+                <div className="bg-[#22c55e] text-black font-black text-lg uppercase tracking-wider rounded-xl py-2 px-4 mb-3">
+                  Separe esta sacola
+                </div>
+
+                <div className="text-white/70 text-sm font-mono uppercase tracking-wider mb-5">
+                  {separacaoAviso.pecas} / {separacaoAviso.total} peças separadas
+                </div>
+
+                {/* Barra de contagem regressiva dos 5 segundos */}
+                <div className="h-2 bg-black/60 rounded-full overflow-hidden mb-5">
+                  <div className="h-full w-full bg-[#22c55e] origin-left animate-separacao-aviso-contagem rounded-full" />
+                </div>
+
+                <button
+                  onClick={() => setSeparacaoAviso(null)}
+                  className="bg-[#22c55e] text-black font-black text-sm uppercase tracking-widest px-8 py-3 rounded-xl hover:bg-[#22c55e]/85 transition-all"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

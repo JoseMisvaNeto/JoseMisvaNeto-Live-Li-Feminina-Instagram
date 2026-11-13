@@ -23,12 +23,44 @@
     animation: border-pulse-red 2s infinite ease-in-out;
   }
 
-  /* Pisca do card enquanto o código está sendo digitado no campo de sacola */
+  /* Pisca do card enquanto o código está sendo digitado no campo de sacola.
+     Sinal INTENSO: estrobo rápido entre lavagem neon e flash branco,
+     borda branca/neon e brilho forte para chamar atenção à distância. */
   @keyframes separacao-pisca {
-    0%, 100% { opacity: 1; box-shadow: 0 0 16px 4px rgba(204, 255, 0, 0.75); }
-    50% { opacity: 0.15; box-shadow: 0 0 6px 1px rgba(204, 255, 0, 0.2); }
+    0%, 100% {
+      opacity: 1;
+      background-color: rgba(204, 255, 0, 0.55);
+      border-color: #ffffff;
+      box-shadow: inset 0 0 22px rgba(255, 255, 255, 0.95), 0 0 26px 8px rgba(204, 255, 0, 0.95);
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      background-color: rgba(255, 255, 255, 0.7);
+      border-color: #ccff00;
+      box-shadow: inset 0 0 14px rgba(204, 255, 0, 1), 0 0 44px 14px rgba(204, 255, 0, 1);
+      transform: scale(1.04);
+    }
   }
   .animate-separacao-pisca {
-    animation: separacao-pisca 0.55s infinite ease-in-out;
+    animation: separacao-pisca 0.35s infinite ease-in-out;
+  }
+
+  /* Aviso central de sacola concluída (abre com pop, fecha em 5s) */
+  @keyframes separacao-aviso-entrada {
+    0% { opacity: 0; transform: scale(0.6) translateY(24px); }
+    60% { opacity: 1; transform: scale(1.07) translateY(0); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+  .animate-separacao-aviso {
+    animation: separacao-aviso-entrada 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes separacao-aviso-contagem {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+  }
+  .animate-separacao-aviso-contagem {
+    animation: separacao-aviso-contagem 5s linear forwards;
   }
 }
