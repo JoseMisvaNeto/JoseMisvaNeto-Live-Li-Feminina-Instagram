@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { api, isDbId } from './lib/api';
 import { classificarSacola } from './utils/classificarSacola';
+import { parseEntradaSacola } from './utils/parseEntradaSacola';
 import { 
   Search, 
   ShoppingBag, 
@@ -1230,6 +1231,20 @@ export default function App() {
     total: number;
     pecas: number;
   } | null>(null);
+  // Aviso central de "PASSOU DO TOTAL" (multiplicador acima do alvo).
+  // NÃO fecha sozinho: o operador precisa ir conferir a pilha física e
+  // decidir com APROVAR (confia e conta tudo) ou RECUSAR (não conta nada).
+  const [separacaoAvisoEstouro, setSeparacaoAvisoEstouro] = useState<{
+    id: number; // identidade: reinicia a animação em avisos consecutivos
+    codigo: string;
+    atual: number;
+    total: number;
+    qtd: number;
+    novaQtd: number;
+  } | null>(null);
+  // Código que continua piscando no card DEPOIS que o campo é limpo sozinho
+  // após 8 segundos — permite encontrar a sacola visualmente sem backspace
+  const [separacaoPiscaPersistente, setSeparacaoPiscaPersistente] = useState<string | null>(null);
   // Catálogo de produtos (referência -> nome) para exibir nas mercadorias
   const [produtosCatalogo, setProdutosCatalogo] = useState<Record<string, string>>({});
 
@@ -1308,17 +1323,38 @@ export default function App() {
     return null;
   };
 
-  const adicionarPecaSacola = (codigo: string) => {
-    const clean = codigo.trim().toUpperCase();
-    if (!clean) return;
-    const sacola = buscarSacolaPorCodigo(clean);
-    if (!sacola) return;
+  const adicionarPecaSacola = (entrada: string) => {
+    // "77" = 1 peça · "77*3" = 3 peças de uma vez (multiplicador estilo PDV)
+    const parsed = parseEntradaSacola(entrada);
+    if (!parsed) return; // formato inválido: mantém o campo para o operador corrigir
+    const sacola = buscarSacolaPorCodigo(parsed.codigo);
+    if (!sacola) return; // código fora da lista de fechamento: ignora
+    const novaQtd = sacola.pecasSeparadas + parsed.qtd;
+
+    // Estouro do total: avisa o operador para conferir a pilha física.
+    // Sem auto-fecho — ele precisa ir até a sacola e escolher APROVAR/RECUSAR.
+    if (novaQtd > sacola.totalAlvo) {
+      setSeparacaoInput('');
+      setSeparacaoPiscaPersistente(null);
+      setSeparacaoSacolaDestacada(sacola.codigo);
+      setSeparacaoAvisoEstouro({
+        id: Date.now(),
+        codigo: sacola.codigo,
+        atual: sacola.pecasSeparadas,
+        total: sacola.totalAlvo,
+        qtd: parsed.qtd,
+        novaQtd,
+      });
+      return;
+    }
+
     const estavaConcluida = sacola.concluida;
-    sacola.pecasSeparadas += 1;
+    sacola.pecasSeparadas = novaQtd;
     if (sacola.pecasSeparadas >= sacola.totalAlvo) sacola.concluida = true;
     separacaoSacolasRef.current.set(sacola.codigo, sacola);
     setSeparacaoSacolaDestacada(sacola.codigo);
     setSeparacaoInput('');
+    setSeparacaoPiscaPersistente(null);
     setSeparacaoTick((v) => v + 1); // re-render imediato do card (+1/X)
     if (sacola.concluida) {
       setMercadoriaAberta(null);
@@ -1335,6 +1371,36 @@ export default function App() {
     salvarSeparacaoLS();
   };
 
+  // APROVAR no aviso "PASSOU DO TOTAL": o operador conferiu a pilha física e
+  // confia no que digitou — registra a quantidade cheia (mesmo acima do alvo)
+  // e a sacola fecha como concluída.
+  const aprovarEstouroSacola = () => {
+    const estouro = separacaoAvisoEstouro;
+    if (!estouro) return;
+    setSeparacaoAvisoEstouro(null);
+    const sacola = separacaoSacolasRef.current.get(estouro.codigo);
+    if (!sacola) return;
+    const estavaConcluida = sacola.concluida;
+    sacola.pecasSeparadas = estouro.novaQtd;
+    sacola.concluida = true;
+    separacaoSacolasRef.current.set(sacola.codigo, sacola);
+    setSeparacaoSacolaDestacada(sacola.codigo);
+    setSeparacaoTick((v) => v + 1);
+    setMercadoriaAberta(null);
+    if (!estavaConcluida) {
+      setSeparacaoAviso({
+        id: Date.now(),
+        codigo: sacola.codigo,
+        total: sacola.totalAlvo,
+        pecas: sacola.pecasSeparadas,
+      });
+    }
+    salvarSeparacaoLS();
+  };
+
+  // RECUSAR: não conta nada — o operador digita a quantidade correta de novo
+  const recusarEstouroSacola = () => setSeparacaoAvisoEstouro(null);
+
   const removerPecaSacola = (codigo: string) => {
     const clean = codigo.trim().toUpperCase();
     const sacola = separacaoSacolasRef.current.get(clean);
@@ -1343,6 +1409,7 @@ export default function App() {
     sacola.concluida = false;
     separacaoSacolasRef.current.set(clean, sacola);
     setSeparacaoSacolaDestacada(clean);
+    setSeparacaoPiscaPersistente(null); // operador já encontrou a sacola
     setSeparacaoTick((v) => v + 1); // re-render imediato do card (+1/X)
     salvarSeparacaoLS();
   };
@@ -1352,9 +1419,15 @@ export default function App() {
   ].sort((a, b) => a.ordem - b.ordem);
 
   const separacaoEmAndamento = separacaoSacolas.filter(s => !s.concluida);
-  const separacaoConcluidas = separacaoSacolas.filter(s => s.concluida);
   const separacaoTotalPecas = separacaoSacolas.reduce((s, s2) => s + s2.pecasSeparadas, 0);
   const separacaoTotalAlvo = separacaoSacolas.reduce((s, s2) => s + s2.totalAlvo, 0);
+  // Códigos de sacolas que EXISTEM: lista de fechamento da tela Acerto
+  // (codigo_cliente) + sacolas já iniciadas. O campo de pesquisa só aceita
+  // digitação que forme o prefixo de um desses códigos reais.
+  const separacaoCodigosValidos: string[] = [
+    ...shoppingList.map((c) => String(c.codigo_cliente ?? '').toUpperCase().trim()),
+    ...separacaoSacolas.map((s) => s.codigo),
+  ].filter((c) => c);
 
   // Persistência LOCAL (localStorage por live) do progresso da separação.
   // Nada disso vai para o banco — é apenas para a tela não zerar ao fechar/recarregar.
@@ -1375,6 +1448,21 @@ export default function App() {
     const t = setTimeout(() => setSeparacaoAviso(null), 5000);
     return () => clearTimeout(t);
   }, [separacaoAviso]);
+
+  // Campo da sacola: se o operador digita e não faz nada por 8 segundos,
+  // o número some do campo (limpo para a próxima digitação), MAS o card
+  // continua piscando — basta encontrar a sacola visualmente na tela.
+  useEffect(() => {
+    const entrada = separacaoInput.trim();
+    if (!entrada) return;
+    const t = setTimeout(() => {
+      const parsed = parseEntradaSacola(entrada);
+      const codigo = (parsed?.codigo ?? entrada.split('*')[0].trim().toUpperCase());
+      if (codigo) setSeparacaoPiscaPersistente(codigo);
+      setSeparacaoInput('');
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [separacaoInput]);
 
   // Ao trocar de live (ou recarregar a página), restaura o progresso salvo daquela live
   useEffect(() => {
@@ -2788,7 +2876,7 @@ export default function App() {
   interface SeparacaoViewProps {
     liveConfig: LiveConfig;
     separacaoEmAndamento: SeparacaoSacola[];
-    separacaoConcluidas: SeparacaoSacola[];
+    separacaoCodigosValidos: string[];
     separacaoSacolas: SeparacaoSacola[];
     separacaoTotalPecas: number;
     separacaoTotalAlvo: number;
@@ -2807,6 +2895,7 @@ export default function App() {
     setSeparacaoView: React.Dispatch<React.SetStateAction<boolean>>;
     adicionarPecaSacola: (codigo: string) => void;
     removerPecaSacola: (codigo: string) => void;
+    separacaoPiscaPersistente: string | null;
   }
 
   // Estado atual do App lido pelo componente estável em cada renderização
@@ -2814,7 +2903,7 @@ export default function App() {
   separacaoPropsRef.current = {
     liveConfig,
     separacaoEmAndamento,
-    separacaoConcluidas,
+    separacaoCodigosValidos,
     separacaoSacolas,
     separacaoTotalPecas,
     separacaoTotalAlvo,
@@ -2833,6 +2922,7 @@ export default function App() {
     setSeparacaoView,
     adicionarPecaSacola,
     removerPecaSacola,
+    separacaoPiscaPersistente,
   };
 
   // Identidade estável (useMemo com []): o React atualiza os cards in-place.
@@ -2845,7 +2935,7 @@ export default function App() {
         const {
           liveConfig,
           separacaoEmAndamento,
-          separacaoConcluidas,
+          separacaoCodigosValidos,
           separacaoSacolas,
           separacaoTotalPecas,
           separacaoTotalAlvo,
@@ -2864,6 +2954,7 @@ export default function App() {
           setSeparacaoView,
           adicionarPecaSacola,
           removerPecaSacola,
+          separacaoPiscaPersistente,
         } = separacaoPropsRef.current!;
         const sair = () => {
           setSeparacaoView(false);
@@ -2898,12 +2989,6 @@ export default function App() {
               </div>
               <div className="text-sm font-black text-white">{separacaoEmAndamento.length}</div>
             </div>
-            <div className="bg-[#1a1a1a] border border-[#22c55e]/40 p-1 rounded-lg min-w-[80px]">
-              <div className="text-[8px] text-[#22c55e]/60 font-black uppercase tracking-wider mb-0.5">
-                Concluídas
-              </div>
-              <div className="text-sm font-black text-[#22c55e]">{separacaoConcluidas.length}</div>
-            </div>
             <div className="bg-[#1a1a1a] border border-[#f59e0b]/40 p-1 rounded-lg min-w-[90px]">
               <div className="text-[8px] text-[#f59e0b]/60 font-black uppercase tracking-wider mb-0.5">
                 Peças separadas
@@ -2916,11 +3001,45 @@ export default function App() {
 
           {/* Campo digitar sacola - mesma altura dos cards de estatísticas ao lado */}
           <div className="flex w-full max-w-xs gap-1 self-stretch md:self-stretch">
+            {/* Dica permanente do multiplicador (estilo caixa de PDV) */}
+            <span
+              className="self-center shrink-0 text-[9px] leading-tight font-black uppercase tracking-wider text-white/45 text-right"
+              title="Além de digitar o código uma vez, você pode usar * para contar várias peças: 77*3 conta 3 peças de uma vez"
+            >
+              use * para<br />multiplicar
+            </span>
             <input
               ref={separacaoInputRef}
               autoFocus
               value={separacaoInput}
-              onChange={(e) => setSeparacaoInput(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                let novo = e.target.value.toUpperCase();
+                // Só aceita código que EXISTA (lista de fechamento do Acerto ou
+                // sacola já iniciada): "2" casa com 23/28/29, mas "24" (inexistente)
+                // é ignorado e o campo permanece em "2" até casar com uma sacola real
+                const idxAsterisco = novo.indexOf('*');
+                const codigoDigitado = (idxAsterisco >= 0 ? novo.slice(0, idxAsterisco) : novo).trim();
+                if (
+                  separacaoCodigosValidos.length > 0 &&
+                  !separacaoCodigosValidos.some((c) => c.startsWith(codigoDigitado))
+                ) {
+                  // mantém o maior prefixo válido (funciona para teclar e para colar)
+                  let melhor = '';
+                  for (const cod of separacaoCodigosValidos) {
+                    let i = 0;
+                    while (i < codigoDigitado.length && i < cod.length && cod[i] === codigoDigitado[i]) i++;
+                    if (i > melhor.length) melhor = codigoDigitado.slice(0, i);
+                  }
+                  if (!melhor) return; // nem o primeiro caractere casa: ignora a tecla
+                  novo = melhor + (idxAsterisco >= 0 ? novo.slice(idxAsterisco) : '');
+                }
+                setSeparacaoInput(novo);
+                // Ao digitar outro código, o piscar antigo (persistente) perde o sentido
+                const parteCodigo = novo.trim().split('*')[0].trim();
+                if (parteCodigo !== separacaoPiscaPersistente) {
+                  setSeparacaoPiscaPersistente(null);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -2944,8 +3063,9 @@ export default function App() {
             />
             <button
               onClick={() => {
+                // O próprio adicionarPecaSacola limpa o campo quando a entrada
+                // é válida; em formato inválido o número fica para correção
                 adicionarPecaSacola(separacaoInput.trim());
-                setSeparacaoInput('');
               }}
               className="bg-[#ccff00] text-black font-black text-[12px] px-3 rounded hover:bg-[#ccff00]/90 transition-all uppercase tracking-wider whitespace-nowrap"
             >
@@ -2958,7 +3078,7 @@ export default function App() {
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1">
             <h2 className="text-xs font-black text-[#ccff00] uppercase tracking-wider">
-              Em separação ({separacaoEmAndamento.length})
+              Sacolas ({separacaoSacolas.length})
             </h2>
           </div>
 
@@ -2966,7 +3086,7 @@ export default function App() {
             key={`separacao-grid-${separacaoVersao}`}
             className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-1"
           >
-            {separacaoEmAndamento.length === 0 ? (
+            {separacaoSacolas.length === 0 ? (
               <div className="col-span-full bg-[#111] border border-white/10 rounded-2xl p-12 text-center">
                 <div className="text-white/20 text-[12px] font-mono mb-2 uppercase tracking-wider">
                   Nenhuma sacola iniciada ainda
@@ -2976,14 +3096,17 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              separacaoEmAndamento.map((sacola) => {
+              separacaoSacolas.map((sacola) => {
                 const pct = sacola.totalAlvo > 0
                   ? Math.min(100, Math.round((sacola.pecasSeparadas / sacola.totalAlvo) * 100))
                   : 0;
                 const estaDestacada = separacaoSacolaDestacada === sacola.codigo;
                 // Pisca imediatamente enquanto o código digitado bate com a sacola
-                const codigoAtivo = separacaoInput.trim().toUpperCase();
-                const estaPiscando = codigoAtivo.length > 0 && sacola.codigo === codigoAtivo;
+                // (reconhece a parte antes do "*": "77*3" continua piscando a 77)
+                const codigoAtivo = separacaoInput.trim().toUpperCase().split('*')[0].trim();
+                const estaPiscando =
+                  (codigoAtivo.length > 0 && sacola.codigo === codigoAtivo) ||
+                  sacola.codigo === separacaoPiscaPersistente;
 
                 return (
                   <div
@@ -2995,12 +3118,24 @@ export default function App() {
                         : 'border-[#333] hover:border-[#ccff00]/50'
                     )}
                     style={{
-                      backgroundColor: sacola.tamanhoSugerido === 'G' ? '#f59e0b' : '#22c55e',
+                      // Sacola encerrada fica BRANCA; as demais mantêm a cor de classificação
+                      backgroundColor: sacola.concluida
+                        ? '#ffffff'
+                        : sacola.tamanhoSugerido === 'G' ? '#f59e0b' : '#22c55e',
                     }}
                   >
                     {/* Pisca enquanto o código digitado bate com esta sacola */}
                     {estaPiscando && (
                       <div className="pointer-events-none absolute inset-0 z-20 rounded border-2 border-black animate-separacao-pisca" />
+                    )}
+
+                    {/* Check verde centralizado entre o número da sacola e a fila
+                        (junto com o card branco, identifica a sacola encerrada) */}
+                    {sacola.concluida && (
+                      <Check
+                        className="absolute left-1/2 -translate-x-1/2 top-1 w-7 h-7 text-[#22c55e] pointer-events-none"
+                        strokeWidth={4}
+                      />
                     )}
 
                     {/* Topo: ícone + código da sacola (esquerda) | posição na fila (direita) */}
@@ -3156,36 +3291,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Zona de sacolas concluídas */}
-        {separacaoConcluidas.length > 0 && (
-          <div className="mt-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-black text-[#22c55e] uppercase tracking-wider">
-                Concluídas ({separacaoConcluidas.length})
-              </h2>
-              <span className="text-[10px] text-[#22c55e]/60 font-mono uppercase tracking-wider">
-                Mova essas sacolas para o lado
-              </span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {separacaoConcluidas.map((sacola) => (
-                <div
-                  key={sacola.codigo}
-                  className="bg-[#111] border border-[#22c55e]/40 rounded-xl p-3 text-center animate-bounce-in"
-                >
-                  <div className="text-[#22c55e] text-2xl font-black mb-1">{sacola.codigo}</div>
-                  <div className="text-[9px] text-[#22c55e]/80 font-black uppercase tracking-wider">
-                    {sacola.pecasSeparadas}/{sacola.totalAlvo}
-                  </div>
-                  <div className="text-[9px] text-white/40 font-mono mt-1 uppercase tracking-wider">
-                    {tamanhoLabel(sacola.tamanhoSugerido)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Rodapé com resumo global */}
         {separacaoSacolas.length > 0 && (
           <div className="mt-8 bg-[#111] border border-[#ccff00]/30 rounded-2xl p-6 text-center">
@@ -3194,7 +3299,7 @@ export default function App() {
             </div>
             <div className="flex flex-col md:flex-row justify-center gap-6 text-lg font-black">
               <span className="text-white">
-                {separacaoConcluidas.length} / {separacaoSacolas.length} sacolas fechadas
+                {separacaoSacolas.filter(s => s.concluida).length} / {separacaoSacolas.length} sacolas fechadas
               </span>
               <span className="text-[#ccff00]">
                 {separacaoTotalPecas} de {separacaoTotalAlvo} peças separadas
@@ -3203,7 +3308,7 @@ export default function App() {
                 R$ {separacaoSacolas.reduce((a, b) => a + b.valorTotal, 0).toFixed(2).replace('.', ',')}
               </span>
             </div>
-            {separacaoConcluidas.length === separacaoSacolas.length && separacaoSacolas.length > 0 && (
+            {separacaoSacolas.length > 0 && separacaoSacolas.every(s => s.concluida) && (
               <div className="mt-4 text-[#22c55e] font-black text-xs uppercase tracking-wider animate-bounce">
                 ✓ Todas as sacolas foram separadas! Pode seguir para o acerto financeiro.
               </div>
@@ -3215,10 +3320,6 @@ export default function App() {
       },
     []
   );
-
-  function tamanhoLabel(t: 'P' | 'G') {
-    return t === 'G' ? 'TAM G' : 'TAM P';
-  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white font-sans selection:bg-[#ccff00] selection:text-black">
@@ -5982,6 +6083,56 @@ export default function App() {
                 >
                   Fechar
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Aviso central de "PASSOU DO TOTAL" (multiplicador acima do alvo).
+              Sem auto-fecho: o operador vai conferir a pilha física e decide
+              com APROVAR (conta tudo, fecha a sacola) ou RECUSAR (não conta). */}
+          {separacaoAvisoEstouro && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/70">
+              <div
+                key={separacaoAvisoEstouro.id}
+                className="w-full max-w-md bg-[#1a1206] border-4 border-[#f59e0b] rounded-3xl p-8 text-center shadow-[0_0_80px_rgba(245,158,11,0.55)] animate-separacao-aviso"
+              >
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <AlertTriangle className="w-7 h-7 text-[#f59e0b]" />
+                  <span className="text-[#f59e0b] text-sm font-black uppercase tracking-[0.25em]">
+                    Passou do total
+                  </span>
+                </div>
+
+                <div className="text-white text-8xl font-black leading-none mb-2">
+                  {separacaoAvisoEstouro.codigo}
+                </div>
+
+                <div className="bg-[#f59e0b] text-black font-black text-lg uppercase tracking-wider rounded-xl py-2 px-4 mb-3">
+                  Confira a pilha física
+                </div>
+
+                <div className="text-white/80 text-lg font-mono font-black uppercase tracking-wider mb-2">
+                  {separacaoAvisoEstouro.atual} / {separacaoAvisoEstouro.total} + {separacaoAvisoEstouro.qtd} = {separacaoAvisoEstouro.novaQtd} peças
+                </div>
+                <div className="text-white/55 text-xs mb-6">
+                  O sistema indica {separacaoAvisoEstouro.total} peças para esta sacola.
+                  Confira na pilha se a quantidade está correta antes de decidir.
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={aprovarEstouroSacola}
+                    className="flex-1 bg-[#22c55e] text-black font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-[#22c55e]/85 transition-all"
+                  >
+                    Aprovar
+                  </button>
+                  <button
+                    onClick={recusarEstouroSacola}
+                    className="flex-1 bg-[#ef4444] text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-[#ef4444]/85 transition-all"
+                  >
+                    Recusar
+                  </button>
+                </div>
               </div>
             </div>
           )}
