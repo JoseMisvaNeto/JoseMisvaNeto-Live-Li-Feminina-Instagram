@@ -1243,8 +1243,23 @@ export default function App() {
     novaQtd: number;
   } | null>(null);
   // Código que continua piscando no card DEPOIS que o campo é limpo sozinho
-  // após 8 segundos — permite encontrar a sacola visualmente sem backspace
+  // após 8 segundos — permite encontrar a sacola visualmente sem backspace.
+  // NÃO pisca para sempre: desliga sozinho 60 segundos (1 min) depois
+  // (ver efeito "pisca persistente com tempo").
   const [separacaoPiscaPersistente, setSeparacaoPiscaPersistente] = useState<string | null>(null);
+  // Nonce do pisca: muda cada vez que o pisca (re)acende, fazendo o timer de
+  // 60s reiniciar — sem isso, religar o MESMO código não re-renderizaria e
+  // o card pararia de piscar antes da hora.
+  const [separacaoPiscaRenicia, setSeparacaoPiscaRenicia] = useState(0);
+  // Aviso de EXCLUSÃO de sacola: quando o operador clica X estando em 1/X
+  // (última peça), o próximo clique NÃO exclui na hora — abre este aviso para
+  // confirmar que realmente quer tirar a sacola da tela de Separação.
+  const [separacaoAvisoExclusao, setSeparacaoAvisoExclusao] = useState<{
+    id: number; // identidade: reinicia a animação em avisos consecutivos
+    codigo: string;
+    pecas: number;
+    total: number;
+  } | null>(null);
   // Catálogo de produtos (referência -> nome) para exibir nas mercadorias
   const [produtosCatalogo, setProdutosCatalogo] = useState<Record<string, string>>({});
 
@@ -1404,7 +1419,18 @@ export default function App() {
   const removerPecaSacola = (codigo: string) => {
     const clean = codigo.trim().toUpperCase();
     const sacola = separacaoSacolasRef.current.get(clean);
-    if (!sacola || sacola.pecasSeparadas <= 0) return;
+    if (!sacola) return;
+    // Chegou em 1/X (ou sacola sem peças): o próximo clique do X NÃO apaga
+    // em silêncio — abre o aviso de exclusão para o operador confirmar.
+    if (sacola.pecasSeparadas <= 1) {
+      setSeparacaoAvisoExclusao({
+        id: Date.now(),
+        codigo: clean,
+        pecas: sacola.pecasSeparadas,
+        total: sacola.totalAlvo,
+      });
+      return;
+    }
     sacola.pecasSeparadas -= 1;
     sacola.concluida = false;
     separacaoSacolasRef.current.set(clean, sacola);
@@ -1413,6 +1439,21 @@ export default function App() {
     setSeparacaoTick((v) => v + 1); // re-render imediato do card (+1/X)
     salvarSeparacaoLS();
   };
+
+  // Confirmado no aviso: remove a sacola da lista de Separação (só localStorage).
+  const excluirSacolaSeparacao = () => {
+    const aviso = separacaoAvisoExclusao;
+    if (!aviso) return;
+    separacaoSacolasRef.current.delete(aviso.codigo);
+    if (separacaoSacolaDestacada === aviso.codigo) setSeparacaoSacolaDestacada(null);
+    if (mercadoriaAberta === aviso.codigo) setMercadoriaAberta(null);
+    if (separacaoPiscaPersistente === aviso.codigo) setSeparacaoPiscaPersistente(null);
+    setSeparacaoAvisoExclusao(null);
+    setSeparacaoTick((v) => v + 1); // re-render imediato (sai da grade)
+    salvarSeparacaoLS();
+  };
+
+  const cancelarExclusaoSacola = () => setSeparacaoAvisoExclusao(null);
 
   const separacaoSacolas: SeparacaoSacola[] = [
     ...separacaoSacolasRef.current.values(),
@@ -1458,11 +1499,24 @@ export default function App() {
     const t = setTimeout(() => {
       const parsed = parseEntradaSacola(entrada);
       const codigo = (parsed?.codigo ?? entrada.split('*')[0].trim().toUpperCase());
-      if (codigo) setSeparacaoPiscaPersistente(codigo);
+      if (codigo) {
+        setSeparacaoPiscaPersistente(codigo);
+        setSeparacaoPiscaRenicia((v) => v + 1); // (re)inicia a contagem de 60s
+      }
       setSeparacaoInput('');
     }, 8000);
     return () => clearTimeout(t);
   }, [separacaoInput]);
+
+  // Pisca persistente com TEMPO: o card fica piscando 60 segundos (1 minuto)
+  // depois de acender e então para sozinho — sem isto o piscar era infinito.
+  // O nonce (separacaoPiscaRenicia) garante o reinício mesmo quando o mesmo
+  // código reacende (valor de estado igual não dispararia este efeito).
+  useEffect(() => {
+    if (!separacaoPiscaPersistente) return;
+    const t = setTimeout(() => setSeparacaoPiscaPersistente(null), 60_000);
+    return () => clearTimeout(t);
+  }, [separacaoPiscaPersistente, separacaoPiscaRenicia]);
 
   // Ao trocar de live (ou recarregar a página), restaura o progresso salvo daquela live
   useEffect(() => {
@@ -3205,7 +3259,7 @@ export default function App() {
                       <button
                         onClick={() => removerPecaSacola(sacola.codigo)}
                         className="w-6 h-6 shrink-0 bg-black text-red-400 font-black rounded hover:bg-black/80 transition-all flex items-center justify-center"
-                        title="Desfazer última peça"
+                        title="Desfazer peça (em 1/X: excluir sacola)"
                       >
                         <X className="w-2.5 h-2.5" />
                       </button>
@@ -6131,6 +6185,57 @@ export default function App() {
                     className="flex-1 bg-[#ef4444] text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-[#ef4444]/85 transition-all"
                   >
                     Recusar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Aviso central de EXCLUSÃO de sacola: aberto pelo botão X quando a
+              sacola está em 1/X (última peça). Sem auto-fecho — o operador
+              decide. Toca só o localStorage da Separação (Acerto/banco intactos). */}
+          {separacaoAvisoExclusao && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/70">
+              <div
+                key={separacaoAvisoExclusao.id}
+                className="w-full max-w-md bg-[#1a0606] border-4 border-[#ef4444] rounded-3xl p-8 text-center shadow-[0_0_80px_rgba(239,68,68,0.55)] animate-separacao-aviso"
+              >
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <Trash2 className="w-7 h-7 text-[#ef4444]" />
+                  <span className="text-[#ef4444] text-sm font-black uppercase tracking-[0.25em]">
+                    Excluir sacola
+                  </span>
+                </div>
+
+                <div className="text-white text-8xl font-black leading-none mb-2">
+                  {separacaoAvisoExclusao.codigo}
+                </div>
+
+                <div className="bg-[#ef4444] text-white font-black text-lg uppercase tracking-wider rounded-xl py-2 px-4 mb-3">
+                  {separacaoAvisoExclusao.pecas} / {separacaoAvisoExclusao.total} peças separadas
+                </div>
+
+                <div className="text-white/70 text-sm mb-6">
+                  Tem certeza que quer <strong>excluir esta sacola</strong> da tela de Separação?
+                  Ela sai da lista de separação.
+                  <br />
+                  <span className="text-white/45 text-xs">
+                    Só a Separação é alterada — o Acerto e o banco não mudam nada.
+                  </span>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={excluirSacolaSeparacao}
+                    className="flex-1 bg-[#ef4444] text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-[#ef4444]/85 transition-all"
+                  >
+                    Excluir
+                  </button>
+                  <button
+                    onClick={cancelarExclusaoSacola}
+                    className="flex-1 bg-white/15 text-white font-black text-sm uppercase tracking-widest py-3 rounded-xl hover:bg-white/25 transition-all"
+                  >
+                    Cancelar
                   </button>
                 </div>
               </div>
