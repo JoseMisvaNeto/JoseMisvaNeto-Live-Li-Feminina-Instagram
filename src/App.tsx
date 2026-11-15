@@ -1242,6 +1242,56 @@ export default function App() {
     };
   }, [activeTab, aceitarPerfilInstagram]);
 
+  // Arrastar/soltar em QUALQUER ponto da tela Live (não só no campo de busca).
+  // Listeners NATIVOS em captura no document: o navegador só permite soltar
+  // quando o 'dragover' é cancelado, e por captura o evento é tratado antes
+  // do React — funciona com o Instagram em outra janela e até sobre o cabeçalho.
+  useEffect(() => {
+    if (activeTab !== 'live') return;
+
+    const campoAlvo = (alvo: EventTarget | null): HTMLElement | null =>
+      alvo instanceof HTMLElement
+        ? alvo.closest('input, textarea, [contenteditable="true"]')
+        : null;
+
+    const aoArrastar = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+
+    const aoSoltar = (e: DragEvent) => {
+      const campo = campoAlvo(e.target);
+      // Soltou em OUTRO campo (ex.: preço/referência): comportamento nativo.
+      if (campo && campo !== searchInputRef.current) return;
+
+      const aceitou = aceitarPerfilInstagram(e.dataTransfer?.getData('text/plain') || '');
+      if (aceitou) {
+        e.preventDefault(); // já preencheu: não deixa o navegador colar por cima
+        return;
+      }
+      // Texto que não é perfil solto no campo de busca (ex.: código):
+      // deixa o navegador inserir normalmente.
+      if (campo === searchInputRef.current) return;
+      e.preventDefault(); // evita navegação ao soltar arquivo/imagem
+    };
+
+    const aoColar = (e: ClipboardEvent) => {
+      if (campoAlvo(e.target)) return;
+      if (aceitarPerfilInstagram(e.clipboardData?.getData('text/plain') || '')) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('dragover', aoArrastar, true);
+    document.addEventListener('drop', aoSoltar, true);
+    document.addEventListener('paste', aoColar, true);
+    return () => {
+      document.removeEventListener('dragover', aoArrastar, true);
+      document.removeEventListener('drop', aoSoltar, true);
+      document.removeEventListener('paste', aoColar, true);
+    };
+  }, [activeTab, aceitarPerfilInstagram]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim() || isSavingSale) return;
@@ -3524,27 +3574,6 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               className="space-y-4"
-              onDragOver={(e) => {
-                // Permite soltar em QUALQUER lugar da tela Live (não só no campo).
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'copy';
-              }}
-              onDrop={(e) => {
-                const alvo = e.target as HTMLElement;
-                const emCampo = alvo.closest('input, textarea, [contenteditable="true"]');
-                // Em outros campos (ex.: código do produto) o navegador cola
-                // normalmente; aqui só tratamos o resto da tela.
-                if (emCampo && emCampo !== searchInputRef.current) return;
-                e.preventDefault();
-                aceitarPerfilInstagram(e.dataTransfer.getData('text/plain'));
-              }}
-              onPaste={(e) => {
-                const alvo = e.target as HTMLElement;
-                if (alvo.closest('input, textarea, [contenteditable="true"]')) return;
-                if (aceitarPerfilInstagram(e.clipboardData.getData('text/plain'))) {
-                  e.preventDefault();
-                }
-              }}
             >
               {/* Giant Search (Reduced Size) */}
               <div className="flex flex-col items-center justify-center py-2 relative">
@@ -5183,17 +5212,28 @@ export default function App() {
                       <label className="text-[11px] font-mono text-[#ccff00]/60 uppercase tracking-widest">Preço Un.</label>
                       <input
                         ref={modalPriceInput}
-                        type="number"
-                        step="0.01"
+                        type="text"
                         inputMode="decimal"
                         value={modalPrice}
                         onChange={(e) => {
-                          modalPriceValueRef.current = e.target.value;
-                          setModalPrice(e.target.value);
+                          // Campo em texto (type=number não permite seleção no
+                          // Chrome). Só aceita dígitos com um único separador
+                          // decimal (aceita vírgula do teclado numérico).
+                          const bruto = e.target.value
+                            .replace(/[^\d.,]/g, '')
+                            .replace(',', '.')
+                            .replace(/^(\d*\.?\d*).*/, '$1');
+                          modalPriceValueRef.current = bruto;
+                          setModalPrice(bruto);
                         }}
                         onFocus={(e) => e.currentTarget.select()}
+                        // O clique coloca o cursor DEPOIS do onFocus: re-seleciona
+                        // tudo no pointerup para o valor ficar pronto para ser
+                        // apagado/substituído por qualquer forma de seleção.
+                        onPointerUp={(e) => e.currentTarget.select()}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
+                            // Enter sem digitar nada: valor mantido, segue para QTD.
                             e.preventDefault();
                             modalQtyInput.current?.focus();
                             modalQtyInput.current?.select();
@@ -5201,19 +5241,21 @@ export default function App() {
                         }}
                         className="w-full bg-[#1a1a1a] border border-white/5 focus:border-[#ccff00] focus:bg-black transition-all duration-200 p-2 rounded-lg outline-none text-base font-bold text-[#ccff00] placeholder-white/20"
                         placeholder="0.00"
+                        autoComplete="off"
                       />
                     </div>
                     <div className="space-y-0.5">
                       <label className="text-[11px] font-mono text-[#ccff00]/60 uppercase tracking-widest">QTD</label>
                       <input
                         ref={modalQtyInput}
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
                         value={modalQty}
                         onChange={(e) => {
                           setModalQty(e.target.value.replace(/\D/g, ''));
                         }}
                         onFocus={(e) => e.currentTarget.select()}
+                        onPointerUp={(e) => e.currentTarget.select()}
                         onBlur={() => {
                           if (!parseInt(modalQty, 10)) setModalQty('1');
                         }}
