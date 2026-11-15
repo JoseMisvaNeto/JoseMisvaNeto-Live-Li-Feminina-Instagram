@@ -56,6 +56,7 @@ import { twMerge } from 'tailwind-merge';
 import { processCSVFiles, downloadCSV, processProductsCSV, downloadProductsCSV, ProcessingResult, InstagramProfile } from './utils/csvProcessor';
 import { downloadAcertoXlsx as downloadAcertoExcel } from './utils/acertoExcel';
 import ProdutosScreen from './components/ProdutosScreen';
+import { extrairPerfilInstagram } from './utils/perfilInstagram';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -303,6 +304,9 @@ export default function App() {
   console.log('[App] Rendering started');
   const [activeTab, setActiveTab] = useState(() => window.innerWidth < 768 ? 'sacolas' : 'live');
   const [searchQuery, setSearchQuery] = useState('');
+  // Último perfil recebido por arrastar/colar/clique (usado só como aviso na
+  // tela). Fica em memória — não grava nada.
+  const [perfilRecebido, setPerfilRecebido] = useState<string | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
   // ---- Lançamento rápido dentro do modal da Live (espela a tela Acerto) ----
@@ -1173,6 +1177,71 @@ export default function App() {
     setFilteredResults([]);
     setActiveIndex(-1);
   };
+
+  // Preenche a busca com um perfil recebido do Instagram (arrastado para
+  // qualquer lugar da tela Live, colado com Ctrl+V ou copiado por um clique
+  // no monitor). Só PREENCHE: quem confirma é o operador com Enter, então
+  // nenhuma gravação acontece aqui.
+  const aceitarPerfilInstagram = useCallback((texto: string): boolean => {
+    const perfil = extrairPerfilInstagram(texto);
+    if (!perfil) return false;
+    setSearchQuery(perfil);
+    searchInputRef.current?.focus();
+    setPerfilRecebido(perfil);
+    return true;
+  }, []);
+
+  // Some com o aviso "PERFIL RECEBIDO" depois de alguns segundos.
+  useEffect(() => {
+    if (!perfilRecebido) return;
+    const timer = setTimeout(() => setPerfilRecebido(null), 4000);
+    return () => clearTimeout(timer);
+  }, [perfilRecebido]);
+
+  // Clique num comentário no Instagram copia o perfil (monitor "PWA clique").
+  // Quando o app volta ao foco, lemos a área de transferência e preenchemos a
+  // busca — sem janela intermediária, sem extensão e sem tocar no banco.
+  // Só age se o campo estiver vazio ou ainda com o perfil que preenchemos:
+  // nunca sobrescreve algo que o operador digitou. Sem permissão de leitura,
+  // fica em silêncio e arrastar/colar continuam funcionando.
+  useEffect(() => {
+    if (activeTab !== 'live') return;
+    let ultimoPreenchido = '';
+
+    const lerAreaDeTransferencia = async () => {
+      const campo = searchInputRef.current;
+      if (!campo) return;
+      const atual = campo.value.trim();
+      if (atual && atual !== ultimoPreenchido) return;
+
+      let texto = '';
+      try {
+        texto = (await navigator.clipboard.readText()).trim();
+      } catch {
+        return;
+      }
+
+      const perfil = extrairPerfilInstagram(texto);
+      if (!perfil || perfil === ultimoPreenchido) return;
+      if (aceitarPerfilInstagram(perfil)) ultimoPreenchido = perfil;
+    };
+
+    const aoFocar = () => void lerAreaDeTransferencia();
+    const aoInteragir = () => void lerAreaDeTransferencia();
+    const aoVoltar = () => {
+      if (document.visibilityState === 'visible') void lerAreaDeTransferencia();
+    };
+
+    window.addEventListener('focus', aoFocar);
+    window.addEventListener('pointerdown', aoInteragir);
+    document.addEventListener('visibilitychange', aoVoltar);
+    return () => {
+      window.removeEventListener('focus', aoFocar);
+      window.removeEventListener('pointerdown', aoInteragir);
+      document.removeEventListener('visibilitychange', aoVoltar);
+    };
+  }, [activeTab, aceitarPerfilInstagram]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim() || isSavingSale) return;
@@ -3455,6 +3524,27 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               className="space-y-4"
+              onDragOver={(e) => {
+                // Permite soltar em QUALQUER lugar da tela Live (não só no campo).
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }}
+              onDrop={(e) => {
+                const alvo = e.target as HTMLElement;
+                const emCampo = alvo.closest('input, textarea, [contenteditable="true"]');
+                // Em outros campos (ex.: código do produto) o navegador cola
+                // normalmente; aqui só tratamos o resto da tela.
+                if (emCampo && emCampo !== searchInputRef.current) return;
+                e.preventDefault();
+                aceitarPerfilInstagram(e.dataTransfer.getData('text/plain'));
+              }}
+              onPaste={(e) => {
+                const alvo = e.target as HTMLElement;
+                if (alvo.closest('input, textarea, [contenteditable="true"]')) return;
+                if (aceitarPerfilInstagram(e.clipboardData.getData('text/plain'))) {
+                  e.preventDefault();
+                }
+              }}
             >
               {/* Giant Search (Reduced Size) */}
               <div className="flex flex-col items-center justify-center py-2 relative">
@@ -3484,7 +3574,13 @@ export default function App() {
                     className="w-full bg-transparent border-b-2 border-[#ccff00]/20 focus:border-[#ccff00] text-2xl md:text-3xl font-black py-3 px-2 outline-none transition-all placeholder:text-[#ccff00]/10 tracking-tighter text-center relative z-10"
                   />
                   <div className="flex justify-center mt-1 gap-3">
-                    <span className="text-[#ccff00]/40 font-mono text-[10px] tracking-[0.3em]">BUSCA EM TEMPO REAL ATIVA</span>
+                    <span className="text-[#ccff00]/40 font-mono text-[10px] tracking-[0.3em]">
+                      {perfilRecebido ? (
+                        <span className="text-[#ccff00]">PERFIL RECEBIDO {perfilRecebido}</span>
+                      ) : (
+                        'BUSCA EM TEMPO REAL ATIVA'
+                      )}
+                    </span>
                     <span className="text-white/20 font-mono text-[10px] tracking-widest uppercase">
                       {isFetchingCustomers ? (
                         <span className="flex items-center gap-2">
