@@ -56,6 +56,8 @@ import { twMerge } from 'tailwind-merge';
 import { processCSVFiles, downloadCSV, processProductsCSV, downloadProductsCSV, ProcessingResult, InstagramProfile } from './utils/csvProcessor';
 import { downloadAcertoXlsx as downloadAcertoExcel } from './utils/acertoExcel';
 import ProdutosScreen from './components/ProdutosScreen';
+import PainelComentariosLive from './components/PainelComentariosLive';
+import { adicionarComentario } from './lib/comentariosLive';
 
 // Utility for tailwind classes
 function cn(...inputs: ClassValue[]) {
@@ -1041,6 +1043,26 @@ export default function App() {
     }
   }, [activeTab, selectedCustomer]);
 
+  // Ponte Instagram → painel de comentários (canal 2): marcamos esta janela
+  // como 'live-app' para que o bookmarklet rodado no IG nos encontre mesmo
+  // quando o IG foi aberto manualmente (fora do botão do app).
+  // As mensagens SÓ são aceitas da origem real do Instagram e o texto fica
+  // apenas em memória (store externo) — nada vai para banco nem localStorage.
+  useEffect(() => {
+    window.name = 'live-app';
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== 'https://www.instagram.com') return;
+      const data = event.data as
+        | { type?: string; id?: string; username?: string; texto?: string }
+        | null
+        | undefined;
+      if (!data || data.type !== 'comentario') return;
+      adicionarComentario(data);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
   // Helper to clean dirty CSV data from strings
   const cleanDisplay = (str: string) => {
     if (!str) return "";
@@ -1173,6 +1195,40 @@ export default function App() {
     setFilteredResults([]);
     setActiveIndex(-1);
   };
+  // Abre o Instagram numa janela popup já posicionada ao lado (mesmo padrão
+  // do wa.me/ig.me). Feita via botão do app, o IG guarda a referência desta
+  // janela e o bookmarklet consegue enviar os comentários em tempo real.
+  const abrirInstagram = () => {
+    window.open(
+      'https://www.instagram.com/',
+      'ig-live',
+      'popup,width=480,height=900,left=8,top=8'
+    );
+  };
+
+  // Fallback do modo cópia: lê o @username da área de transferência.
+  const colarNaBusca = async () => {
+    try {
+      const texto = await navigator.clipboard.readText();
+      if (texto && texto.trim()) {
+        setSearchQuery(texto.trim());
+        searchInputRef.current?.focus();
+        return;
+      }
+    } catch {
+      // Sem permissão de leitura: o campo já aceita Ctrl+V normalmente.
+    }
+    searchInputRef.current?.focus();
+  };
+
+  // Clique num comentário do painel: só PREENCHE a busca (nenhuma gravação
+  // acontece até o operador confirmar com Enter).
+  const preencherBuscaComComentario = (username: string) => {
+    if (!username) return;
+    setSearchQuery(`@${username}`);
+    searchInputRef.current?.focus();
+  };
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim() || isSavingSale) return;
@@ -3465,6 +3521,16 @@ export default function App() {
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      // Plano B: arrastar texto (ex.: do painel do IG) ainda funciona
+                      e.preventDefault();
+                      const texto = e.dataTransfer.getData('text/plain');
+                      if (texto && texto.trim()) {
+                        setSearchQuery(texto.trim());
+                        searchInputRef.current?.focus();
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Escape') {
                         setSearchQuery('');
@@ -3495,6 +3561,26 @@ export default function App() {
                         `${customers.length} CLIENTES CARREGADOS`
                       )}
                     </span>
+                  </div>
+                  <div className="flex justify-center gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={abrirInstagram}
+                      title="Abre o Instagram ao lado com o canal automático de comentários"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[#ccff00]/10 border border-[#ccff00]/30 rounded-lg text-[#ccff00] text-[10px] font-black uppercase tracking-widest hover:bg-[#ccff00]/20 transition-all"
+                    >
+                      <Instagram className="w-3.5 h-3.5" />
+                      Instagram
+                    </button>
+                    <button
+                      type="button"
+                      onClick={colarNaBusca}
+                      title="Cola o @username copiado do painel de comentários"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-white/50 text-[10px] font-black uppercase tracking-widest hover:text-white/80 hover:border-white/25 transition-all"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      Colar
+                    </button>
                   </div>
                 </form>
 
@@ -3695,6 +3781,9 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Painel flutuante de comentários da live (borda direita) */}
+              <PainelComentariosLive onSelecionar={preencherBuscaComComentario} />
             </motion.div>
             )
           ) : activeTab === 'acerto' ? (
