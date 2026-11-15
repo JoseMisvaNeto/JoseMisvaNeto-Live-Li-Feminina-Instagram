@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Ponte de comentários</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #ccff00;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-size: 13px;
+      text-align: center;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">🔄 Ponte de comentários — conectando…</div>
+  <script>
+    // Ponte de comentários da live (arquivo ESTÁTICO — não toca em servidor nem banco).
+    // Papel: receber comentários enviados pela página do Instagram (postMessage)
+    // e repassá-los à janela principal do app via BroadcastChannel (mesma origem).
+    // Handshake: pergunta ao app ("ponte-ola") a cada 5s; o responde ("app-ola").
+    // Assim o painel do IG mostra status VERDADEIRO (app aberto/fechado).
+    var ORIGEM_IG = 'https://www.instagram.com';
+    var statusEl = document.getElementById('status');
+
+    // Se o usuário abrir esta página à mão (aba comum), ela se identifica:
+    // o monitor no IG a encontra depois pelo nome (janela.open('', 'ponte-comentarios'))
+    // mesmo sem conseguir criá-la via popup bloqueado.
+    try { window.name = 'ponte-comentarios'; } catch (e) {}
+
+    function setStatus(t) {
+      statusEl.textContent = t;
+    }
+
+    var bc = null;
+    try {
+      bc = new BroadcastChannel('comentarios-live');
+    } catch (e) {
+      bc = null;
+    }
+
+    var confirmado = false;   // app confirmou que está ouvindo
+    var ultimoApp = 0;        // quando foi a última resposta do app
+
+    function avisarIg(ok) {
+      try {
+        if (window.opener) {
+          window.opener.postMessage({ type: 'ponte-status', ok: !!ok, motivo: ok ? '' : 'sem-app' }, ORIGEM_IG);
+        }
+      } catch (e) {}
+    }
+
+    if (!bc) {
+      setStatus('🔴 BroadcastChannel indisponível neste navegador');
+      avisarIg(false);
+    } else {
+      // Heartshake: perguntamos ao app e marcamos a última resposta
+      function ola() {
+        try { bc.postMessage({ type: 'ponte-ola' }); } catch (e) {}
+        if (confirmado && Date.now() - ultimoApp > 6500) {
+          // app sumiu (fechou/recarregou) — avisamos o IG para não mentir
+          confirmado = false;
+          avisarIg(false);
+          setStatus('🔴 Abra o app em localhost:3000');
+        }
+      }
+      ola();
+      setInterval(ola, 5000);
+
+      bc.onmessage = function (ev) {
+        var d = ev.data;
+        if (!d || d.type !== 'app-ola') return;
+        ultimoApp = Date.now();
+        if (!confirmado) {
+          confirmado = true;
+          avisarIg(true);
+        }
+        setStatus('🟢 Encaminhando comentários ao app');
+      };
+
+      // Se o app não responder em 2s, dizemos a verdade ao IG
+      setTimeout(function () {
+        if (!confirmado) {
+          avisarIg(false);
+          setStatus('🔴 Abra o app em localhost:3000');
+        }
+      }, 2000);
+    }
+
+    // Recebe do Instagram e repassa ao app principal (BroadcastChannel)
+    window.addEventListener('message', function (ev) {
+      if (ev.origin !== ORIGEM_IG) return;
+      var d = ev.data;
+      if (!d) return;
+      if (d.type === 'ping') {
+        // responde com o estado atual (o IG usa para saber se está conectado)
+        try {
+          ev.source.postMessage({ type: 'ponte-status', ok: confirmado, motivo: confirmado ? '' : 'sem-app' }, ORIGEM_IG);
+        } catch (e) {}
+        return;
+      }
+      if (d.type !== 'comentario') return;
+      if (bc) {
+        try { bc.postMessage(d); } catch (e) {}
+        setStatus('✅ Comentário encaminhado — ' + new Date().toLocaleTimeString('pt-BR'));
+      } else {
+        setStatus('⚠️ Sem BroadcastChannel — recarregue o app');
+      }
+    });
+
+    // Se aberto como janelinha, avisa o Instagram (quem abriu) que está pronta
+    try {
+      if (window.opener) window.opener.postMessage({ type: 'ponte-ok' }, ORIGEM_IG);
+    } catch (e) {}
+  </script>
+</body>
+</html>

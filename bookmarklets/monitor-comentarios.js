@@ -1,8 +1,8 @@
 javascript:(function(){
   /*
-   * MONITOR DE COMENTÁRIOS DA LIVE — v2
-   * ------------------------------------
-   * 1) Clique no botão "📱 Instagram" da tela Live do app (abre o IG ao lado).
+   * MONITOR DE COMENTÁRIOS DA LIVE — v2.1 (com PONTE para Brave)
+   * ------------------------------------------------------------
+   * 1) Clique no botão "📱 Instagram" da tela Live do app (abre o IG).
    * 2) Cole ESTE script inteiro num marcador e clique nele 1 vez no IG.
    * 3) Pronto: comentários são encaminhados ao app em tempo real
    *    (painel flutuante 💬 na borda direita da tela Live).
@@ -10,19 +10,36 @@ javascript:(function(){
    * Canais (testados nesta ordem):
    *   1. window.opener  — IG aberto pelo botão do app (tempo real)
    *   2. janela nomeada 'live-app' — IG aberto manualmente
-   *   3. cópia — clique no item copia @username; no app use "📋 Colar" ou Ctrl+V
+   *   3. PONTE — Brave corta 1 e 2; abrimos uma janelinha
+   *      localhost:3000/ponte.html que repassa ao app (automático)
+   *   4. cópia — clique no item copia @username; no app use "📋 Colar" ou Ctrl+V
+   *
+   * O status no topo do painel mostra QUAL canal está ativo:
+   *   "conectado ✓ (ponte)" / "conectado ✓ (janela)" / "modo cópia …"
    *
    * Clique num item = envia ao app + copia (sempre os dois, com feedback).
    * Arrastar (plano B) continua funcionando.
    * Sem setInterval: usa MutationObserver (leve, não trava a live).
    * Comentário repetido do MESMO perfil com o MESMO texto volta a aparecer
    * após 60s (antes disso é o IG re-desenhando a lista = duplicado).
-   * Rode de novo para remover o painel.
+   * Rode de novo para desligar; rode mais uma vez para ligar de volta.
    */
   var ID = 'monitor-comentarios-v2';
   var APP = 'live-app';
   var ORIGENS_OK = ['http://localhost:3000', 'http://127.0.0.1:3000'];
   var LIMITE = 50;
+
+  // ---------- limpa a execução anterior (rodar de novo = desligar) ----------
+  // Antes só removíamos o painel: o MutationObserver e o listener de message
+  // antigos continuavam vivos (e podiam ENVIAR comentários em duplicado).
+  var reg = window.__mcReg;
+  var ponteAnterior = null;
+  if (reg) {
+    if (reg.obs) { try { reg.obs.disconnect(); } catch (e) {} }
+    if (reg.msg) window.removeEventListener('message', reg.msg);
+    if (reg.ponte && !reg.ponte.closed) ponteAnterior = reg.ponte;
+  }
+  window.__mcReg = null;
 
   var antigo = document.getElementById(ID);
   if (antigo) { antigo.remove(); return; }
@@ -38,8 +55,15 @@ javascript:(function(){
   var itens = [];                // histórico (mais novo em cima)
   var pausado = false;
   var status = 'detectando…';
-  var canal = null;              // 'opener' | 'named' | 'copy'
+  var canal = null;              // 'opener' | 'named' | 'ponte' | 'copy'
   var contador = 0;
+  // ponte (canal 3 — Brave corta opener/nome)
+  var PONTE_URL = 'http://localhost:3000/ponte.html';
+  var PONTE_ORIGEM = 'http://localhost:3000';
+  var ponteWin = ponteAnterior;  // janela da ponte (reaproveitada se já aberta)
+  var pontePronta = false;       // ponte confirmou que o APP está ouvindo
+  var ponteFalha = '';           // '' | 'bloqueada' | 'sem-app'
+  var jaProvouJanela = false;    // já testamos janela nomeada nesta execução
 
   // ---------- janela do app ----------
   function janelaOpener() {
@@ -59,31 +83,133 @@ javascript:(function(){
       return null;
     } catch (e) { return null; }
   }
-  function alvoApp() {
+  // ---------- ponte (canal 3) ----------
+  function ponteViva() {
+    return !!(ponteWin && !ponteWin.closed && pontePronta);
+  }
+  // Só chamada com GESTO do usuário (clique no favorito / clique no item /
+  // execução no Console): window.open fora de gesto seria bloqueado.
+  function pingarPonte(n) {
+    if (!ponteWin || ponteWin.closed || n <= 0) return;
+    try { ponteWin.postMessage({ type: 'ping' }, PONTE_ORIGEM); } catch (e) {}
+    setTimeout(function () { pingarPonte(n - 1); }, 700);
+  }
+  function abrirPonte() {
+    if (ponteWin && !ponteWin.closed) return ponteWin;
+    try {
+      ponteWin = window.open(PONTE_URL, 'ponte-comentarios', 'width=340,height=150,left=8,top=8');
+    } catch (e) { ponteWin = null; }
+    if (!ponteWin) { ponteFalha = 'bloqueada'; pontePronta = false; return null; }
+    ponteFalha = '';
+    pontePronta = false;
+    // Pings: a ponte responde com o estado atual (cobre janela já existente
+    // e a corrida entre o load dela e a criação deste listener).
+    pingarPonte(3);
+    return ponteWin;
+  }
+  // Adota uma ponte aberta à mão pelo usuário (aba comum em localhost:3000/
+  // ponte.html — ela mesma se chama 'ponte-comentarios'). NÃO cria janela
+  // nova, então funciona SEM gesto (caminho quando o popup fica bloqueado).
+  function adotarPonte() {
+    if (ponteWin && !ponteWin.closed) return ponteWin;
+    try {
+      var w = window.open('', 'ponte-comentarios');
+      if (!w || w === window) return null;
+      var href = null;
+      try { href = String(w.location.href); } catch (e) { href = null; } // cross-origin = pode ser a ponte
+      if (href !== null) {
+        if (href.indexOf('about:blank') === 0) { try { w.close(); } catch (e) {} return null; }
+        if (href.indexOf('ponte.html') === -1 && href.indexOf('localhost') === -1 && href.indexOf('127.0.0.1') === -1) return null;
+      }
+      ponteWin = w;
+      ponteFalha = '';
+      pontePronta = false;
+      pingarPonte(3);
+      return ponteWin;
+    } catch (e) { return null; }
+  }
+  function alvoApp(comJanela) {
     var w = janelaOpener();
     if (w) { canal = 'opener'; return w; }
-    w = janelaNomeada();
-    if (w) { canal = 'named'; return w; }
+    // janela nomeada tem efeito colateral (window.open) — só quando há gesto
+    // ou ainda não testamos (evita janelinha em branco a cada comentário)
+    if (comJanela || !jaProvouJanela) {
+      jaProvouJanela = true;
+      w = janelaNomeada();
+      if (w) { canal = 'named'; return w; }
+    }
+    if (!ponteViva()) {
+      if (comJanela) abrirPonte();        // gesto: pode criar a janela
+      else adotarPonte();                 // sem gesto: só adota se já existe
+    }
+    if (ponteViva()) { canal = 'ponte'; return ponteWin; }
     canal = 'copy';
     return null;
   }
 
   // ---------- envio ----------
-  function enviar(username, texto, id) {
-    var w = alvoApp();
+  function enviar(username, texto, id, gesto) {
+    var w = alvoApp(gesto === true);
     var payload = { type: 'comentario', id: id, username: username, texto: texto };
     if (w) {
       try {
-        // origem de destino: o app valida event.origin === instagram.com no RECEBIMENTO;
-        // aqui escolhemos o destino seguro com '*'-like restrito às origens do app
-        for (var i = 0; i < ORIGENS_OK.length; i++) {
-          try { w.postMessage(payload, ORIGENS_OK[i]); } catch (e) {}
+        // origem de destino por canal: a ponte SÓ aceita http://localhost:3000;
+        // janela do app (opener/nome) aceita qualquer uma das origens do app.
+        var origens = canal === 'ponte' ? [PONTE_ORIGEM] : ORIGENS_OK;
+        for (var i = 0; i < origens.length; i++) {
+          try { w.postMessage(payload, origens[i]); } catch (e) {}
         }
         return true;
       } catch (e) {}
     }
     return false;
   }
+
+  // ---------- status verdadeiro (qual canal está ativo) ----------
+  function statusConectado() {
+    if (canal === 'ponte') return 'conectado ✓ (ponte)';
+    if (canal === 'opener' || canal === 'named') return 'conectado ✓ (janela)';
+    return 'conectado ✓';
+  }
+  function statusFalha() {
+    if (ponteFalha === 'bloqueada') return 'modo cópia (ponte bloqueada)';
+    if (ponteFalha === 'sem-app') return 'modo cópia (abra o app)';
+    if (ponteWin && !ponteWin.closed) return 'ponte abrindo…';
+    return 'modo cópia — clique p/ copiar';
+  }
+
+  // ---------- a ponte reporta o estado (handshake) ----------
+  function aoReceberDaPonte(ev) {
+    if (ev.origin !== PONTE_ORIGEM) return;
+    var d = ev.data;
+    if (!d) return;
+    if (d.type === 'ponte-ok') return; // página da ponte no ar (sem estado ainda)
+    if (d.type !== 'ponte-status') return;
+    pontePronta = !!d.ok;
+    ponteFalha = d.ok ? '' : (d.motivo || 'sem-app');
+    if (!pausado && canal !== 'opener' && canal !== 'named') {
+      if (pontePronta) {
+        canal = 'ponte';
+        // reenvia o que caiu em modo cópia durante a carga da ponte
+        for (var k = 0; k < itens.length; k++) {
+          var it = itens[k];
+          if (!it.enviado && enviar(it.u, it.t, it.id)) {
+            it.enviado = true;
+            (function (el) {
+              if (!el) return;
+              el.style.borderLeftColor = '#22c55e';
+              setTimeout(function () { el.style.borderLeftColor = ''; }, 1200);
+            })(it.el);
+          }
+        }
+        status = statusConectado();
+      } else {
+        status = statusFalha();
+      }
+      atualizarStatus();
+    }
+  }
+  window.addEventListener('message', aoReceberDaPonte);
 
   function copiar(texto, aoTerminar) {
     var ok = function () { if (aoTerminar) aoTerminar(true); };
@@ -153,8 +279,7 @@ javascript:(function(){
       contador++;
       var id = 'ig' + Date.now().toString(36) + '-' + contador;
       var enviado = enviar(c.u, c.t, id);
-      if (!enviado) status = 'modo cópia — clique para copiar';
-      else status = 'conectado ✓';
+      status = enviado ? statusConectado() : statusFalha();
       var item = { id: id, u: c.u, t: c.t, enviado: enviado, el: null };
       itens.unshift(item);
       if (itens.length > LIMITE) itens.pop();
@@ -201,7 +326,7 @@ javascript:(function(){
     item.el = i;
 
     i.onclick = function () {
-      var enviado = enviar(item.u, item.t, item.id);
+      var enviado = enviar(item.u, item.t, item.id, true); // gesto = pode (re)abrir ponte
       copiar('@' + item.u, function (ok) {
         var antes = i.style.borderLeftColor;
         i.style.borderLeftColor = (enviado && ok) ? '#22c55e' : (ok ? '#ffdc80' : '#666');
@@ -211,7 +336,7 @@ javascript:(function(){
           i.removeAttribute('data-fb');
         }, 1200);
       });
-      status = enviado ? 'conectado ✓' : 'modo cópia — clique para copiar';
+      status = enviado ? statusConectado() : statusFalha();
       atualizarStatus();
     };
     i.ondragstart = function (e) {
@@ -234,7 +359,7 @@ javascript:(function(){
   painel.querySelector('#mc-pausar').onclick = function (e) {
     pausado = !pausado;
     e.target.textContent = pausado ? 'retomar' : 'pausar';
-    status = pausado ? 'pausado ⏸' : (canal === 'copy' ? 'modo cópia' : 'conectado ✓');
+    status = pausado ? 'pausado ⏸' : (canal === 'copy' ? statusFalha() : statusConectado());
     atualizarStatus();
     if (!pausado) varredura();
   };
@@ -256,12 +381,18 @@ javascript:(function(){
   var obs = new MutationObserver(varredura);
   obs.observe(document.body, { childList: true, subtree: true });
 
-  // status inicial
+  // status inicial — aqui ainda é gesto do clique no favorito, então dá para
+  // abrir a ponte (Brave: opener/nome falham → a ponte assume)
   (function () {
-    var w = alvoApp();
-    status = w ? 'conectado ✓' : 'modo cópia — clique para copiar';
+    var w = alvoApp(true);
+    if (w) status = statusConectado();
+    else status = statusFalha();
     atualizarStatus();
   })();
 
   varredura();
+
+  // guarda referências para a próxima execução limpar direito
+  // (desligar = desconectar observer + remover listener + reaproveitar ponte)
+  window.__mcReg = { obs: obs, msg: aoReceberDaPonte, ponte: ponteWin };
 })();

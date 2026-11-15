@@ -1048,6 +1048,8 @@ export default function App() {
   // quando o IG foi aberto manualmente (fora do botão do app).
   // As mensagens SÓ são aceitas da origem real do Instagram e o texto fica
   // apenas em memória (store externo) — nada vai para banco nem localStorage.
+  // Canal 3 (Brave corta opener/nome): o bookmarklet abre a jelinha-ponte
+  // public/ponte.html (mesma origem do app) e ela repassa via BroadcastChannel.
   useEffect(() => {
     window.name = 'live-app';
     const onMessage = (event: MessageEvent) => {
@@ -1060,7 +1062,34 @@ export default function App() {
       adicionarComentario(data);
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+
+    let ponte: BroadcastChannel | null = null;
+    try {
+      // Só recebe de páginas da MESMA origem (localhost) — nunca de fora.
+      ponte = new BroadcastChannel('comentarios-live');
+      ponte.onmessage = (event: MessageEvent) => {
+        const data = event.data as
+          | { type?: string; id?: string; username?: string; texto?: string }
+          | null
+          | undefined;
+        if (!data) return;
+        // Handshake da ponte: a jelinha pergunta "app aí?" e nós confirmamos
+        // (assim ela sabe se vale encaminhar e mostra status verdadeiro).
+        if (data.type === 'ponte-ola') {
+          ponte?.postMessage({ type: 'app-ola' });
+          return;
+        }
+        if (data.type !== 'comentario') return;
+        adicionarComentario(data);
+      };
+    } catch {
+      ponte = null;
+    }
+
+    return () => {
+      window.removeEventListener('message', onMessage);
+      ponte?.close();
+    };
   }, []);
 
   // Helper to clean dirty CSV data from strings
@@ -1195,15 +1224,15 @@ export default function App() {
     setFilteredResults([]);
     setActiveIndex(-1);
   };
-  // Abre o Instagram numa janela popup já posicionada ao lado (mesmo padrão
-  // do wa.me/ig.me). Feita via botão do app, o IG guarda a referência desta
-  // janela e o bookmarklet consegue enviar os comentários em tempo real.
+  // Abre o Instagram numa ABA NORMAL do Chrome (sem features de 'popup'):
+  // janela popup do Chrome é sem barra de navegador e o usuário não teria
+  // como clicar no favorito (bookmarklet). A aba aberta por aqui guarda o
+  // opener — o canal 1 (postMessage em tempo real) continua ativo. Para ver
+  // lado a lado, é só arrastar a aba para fora e encaixar com Win+←/Win+→.
   const abrirInstagram = () => {
-    window.open(
-      'https://www.instagram.com/',
-      'ig-live',
-      'popup,width=480,height=900,left=8,top=8'
-    );
+    // '_blank' sempre cria uma aba/janela NOVA: um nome fixo fazia o navegador
+    // reaproveitar janelinhas antigas (popups sem barra de favoritos).
+    window.open('https://www.instagram.com/', '_blank');
   };
 
   // Fallback do modo cópia: lê o @username da área de transferência.
