@@ -3,7 +3,8 @@
  * -------------------------------------------------------------
  * Mantém a coleta de comentários do script original e adiciona:
  *   • BARRA ROSA ...... segure e leve a janela para qualquer lugar
- *   • CANTO INF. DIREITO  arraste para mudar largura/altura
+ *   • BARRA INFERIOR .. arraste para mudar SÓ a altura (largura é fixa,
+ *                       igual à original: 320px)
  *   • "–" ............. minimiza (só a barra); clique de novo restaura
  *   • CLIQUE no item .. copia o @perfil para o app preencher a busca
  *
@@ -22,7 +23,7 @@
 
   const p = document.createElement('div');
   p.id = id;
-  p.style.cssText = 'position:fixed;top:10px;right:10px;width:320px;height:96vh;min-width:220px;min-height:44px;background:#1a1a1a;color:#fff;z-index:99999;font-family:sans-serif;border-left:4px solid #d62976;box-shadow:-5px 0 15px rgba(0,0,0,.5);display:flex;flex-direction:column;border-radius:6px;overflow:hidden;box-sizing:border-box;';
+  p.style.cssText = 'position:fixed;top:10px;right:10px;width:320px;min-width:320px;max-width:320px;height:96vh;min-height:44px;background:#1a1a1a;color:#fff;z-index:99999;font-family:sans-serif;border-left:4px solid #d62976;box-shadow:-5px 0 15px rgba(0,0,0,.5);display:flex;flex-direction:column;border-radius:6px;overflow:hidden;box-sizing:border-box;';
 
   p.innerHTML =
     "<div id='barra-p' style='cursor:move;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:8px;background:#d62976;padding:6px 8px;font-size:13px;font-weight:bold;flex:0 0 auto;'>" +
@@ -30,7 +31,7 @@
     "<span id='mini-p' title='Minimizar / restaurar' style='cursor:pointer;background:rgba(255,255,255,.25);border-radius:4px;padding:0 7px;'>&ndash;</span>" +
     "</div>" +
     "<div id='lista-p' style='flex:1 1 auto;overflow:hidden;padding:8px;'></div>" +
-    "<div id='redim-p' title='Arraste para mudar o tamanho' style='position:absolute;right:0;bottom:0;width:18px;height:18px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 50%,#d62976 50%,#d62976 65%,transparent 65%,transparent 80%,#d62976 80%);'></div>";
+    "<div id='redim-p' title='Arraste para cima/baixo mudar a altura' style='position:absolute;left:0;right:0;bottom:0;height:10px;cursor:ns-resize;background:linear-gradient(to right,transparent 42%,rgba(214,41,118,.75) 42%,rgba(214,41,118,.75) 58%,transparent 58%);'></div>";
 
   document.body.appendChild(p);
   const l = p.querySelector('#lista-p');
@@ -50,9 +51,10 @@
     function mover(e) {
       let x = e.clientX - dx;
       let y = e.clientY - dy;
-      // nunca deixa a barra sumir da tela (sempre dá para pegar de novo)
+      // nunca some da tela: a barra fica sempre à mão na horizontal...
       x = Math.max(-r.width + 80, Math.min(x, window.innerWidth - 80));
-      y = Math.max(0, Math.min(y, window.innerHeight - 30));
+      // ...e a base nunca passa do rodapé (senão a barra de altura fica fora)
+      y = Math.max(0, Math.min(y, Math.max(0, window.innerHeight - r.height)));
       p.style.left = x + 'px';
       p.style.top = y + 'px';
     }
@@ -64,21 +66,16 @@
     document.addEventListener('mouseup', soltar);
   });
 
-  // ---------- REDIMENSIONAR (canto inferior direito) ----------
+  // ---------- ALTURA (barra inferior; a largura é FIXA, igual à original) ----------
   p.querySelector('#redim-p').addEventListener('mousedown', function (ev) {
     ev.preventDefault();
     ev.stopPropagation();
     const r = p.getBoundingClientRect();
-    p.style.left = r.left + 'px';
-    p.style.top = r.top + 'px';
-    p.style.right = 'auto';
-    p.style.width = r.width + 'px';
-    p.style.height = r.height + 'px';
+    const y0 = ev.clientY; // referência: onde o mouse ESTAVA quando clicou
+    const altura0 = r.height;
     function redim(e) {
-      // nunca maior que a própria janela (senão some da tela)
-      const w = Math.min(window.innerWidth, Math.max(220, r.width + (e.clientX - r.left)));
-      const h = Math.min(window.innerHeight, Math.max(44, r.height + (e.clientY - r.top)));
-      p.style.width = w + 'px';
+      // só muda a altura, exatamente o tanto que o mouse andou (nada de dobrar)
+      const h = Math.min(window.innerHeight, Math.max(44, altura0 + (e.clientY - y0)));
       p.style.height = h + 'px';
     }
     function soltar() {
