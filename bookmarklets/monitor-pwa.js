@@ -7,6 +7,10 @@
  *                       igual à original: 320px)
  *   • "–" ............. minimiza (só a barra); clique de novo restaura
  *   • CLIQUE no item .. copia o @perfil para o app preencher a busca
+ *   • REPETIÇÃO ....... mesmo cliente repetindo o mesmo texto (ex.: "quero o
+ *                       G" na peça A e de novo na peça B) gera UM ITEM NOVO.
+ *                       Só é ignorado o clone instantâneo do próprio IG
+ *                       (re-render nos primeiros JANELA_MS).
  *
  * INSTALAÇÃO: cole a versão linha única (monitor-pwa.min.js) no favorito.
  * Para regerar após editar este arquivo:  node bookmarklets/gerar.cjs
@@ -104,8 +108,21 @@
     }
   });
 
-  // ---------- COLETA DE COMENTÁRIOS (igual ao original) ----------
-  const m = new Set();
+  // ---------- COLETA DE COMENTÁRIOS ----------
+  // Três proteções, cada uma para um problema diferente:
+  // 1) feitos (WeakMap nó -> texto já levado ao painel): o seletor roda a
+  //    cada 800ms e o IG mantém o comentário no DOM — o MESMO nó não pode
+  //    entrar2×. É WeakMap (e não só "nó marcado") porque o IG pode REUSAR
+  //    o nó para outro comentário: se o texto do nó mudou, ele é processado.
+  // 2) vistos (Map texto -> hora): trava curta de JANELA_MS só contra o IG
+  //    recriar o MESMO comentário num nó novo (re-render). Passou da janela,
+  //    o mesmo texto do mesmo cliente entra de novo — é isso que faz o
+  //    "quero o G" da peça B aparecer depois do "quero o G" da peça A.
+  // 3) t.length <= 1: texto ainda vazio/incompleto; não marca o nó, para
+  //    reavaliar no próximo tick quando o texto chegar inteiro.
+  const JANELA_MS = 5000;
+  const feitos = new WeakMap();
+  const vistos = new Map();
   window.__mpIntervalo = setInterval(function () {
     if (!document.getElementById(id)) {
       clearInterval(window.__mpIntervalo);
@@ -117,8 +134,18 @@
       const pai = s.closest('div');
       let u = pai ? (pai.querySelector('span') || {}).innerText : 'Usuario';
       u = (u || 'Usuario').replace('@', '').trim();
+      if (t.length <= 1) return; // texto incompleto: reavalia no próximo tick
       const idU = u + t;
-      if (m.has(idU) || t.length <= 1) return;
+      if (feitos.get(s) === idU) return; // este nó já está no painel
+      const agora = Date.now();
+      if (agora - (vistos.get(idU) || 0) < JANELA_MS) {
+        // clone/re-render do IG do MESMO comentário dentro da janela:
+        // já mostramos isso agora há pouco — marca o nó e não duplica
+        feitos.set(s, idU);
+        return;
+      }
+      // evento novo: ou um comentário que nunca vimos, ou o cliente
+      // repetindo o mesmo texto (peça B) depois da janela — entra de novo
       const i = document.createElement('div');
       i.style.cssText = 'margin-bottom:4px;padding:6px 8px;background:#2a2a2a;border-radius:4px;border-left:4px solid #ffdc80;cursor:grab;user-select:all;display:flex;flex-direction:column;justify-content:center;';
       i.setAttribute('draggable', 'true');
@@ -148,7 +175,8 @@
       };
       i.innerHTML = "<strong style='color:#ffdc80;font-size:16px;display:block;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>" + u + "</strong><span style='font-size:11px;color:#bbb;display:block;line-height:1.1;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>" + t + "</span>";
       l.prepend(i);
-      m.add(idU);
+      feitos.set(s, idU);
+      vistos.set(idU, agora);
       if (l.children.length > 15) l.removeChild(l.lastChild);
       cont.textContent = String(l.children.length);
     });
