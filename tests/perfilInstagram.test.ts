@@ -34,3 +34,16 @@ test('texto vazio ou inválido devolve null', () => {
   // Com "@" explícito, um caractere só já é intenção do usuário.
   assert.equal(extrairPerfilInstagram('@a'), '@a');
 });
+
+test('nome de perfil com espaços é aceito com o nome exato', () => {
+  assert.equal(extrairPerfilInstagram('Andressa Grittens'), 'Andressa Grittens');
+  assert.equal(extrairPerfilInstagram('@Andressa Grittens'), 'Andressa Grittens');
+  assert.equal(extrairPerfilInstagram('  Maria Clara Silva  '), 'Maria Clara Silva');
+  assert.equal(extrairPerfilInstagram("Joana D'Angelo"), "Joana D'Angelo");
+});
+
+test('frase com pontuação ou caixa mista não vira perfil', () => {
+  assert.equal(extrairPerfilInstagram('Atenção: Pedido Novo'), null);
+  assert.equal(extrairPerfilInstagram('Gostei Da peça azul'), null);
+  assert.equal(extrairPerfilInstagram('Bom dia, tudo bem?'), null);
+});

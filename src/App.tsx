@@ -300,6 +300,26 @@ const removeLiveLsKeys = (date: string) => {
   });
 };
 
+// Qualquer modal/overlay do app usa "fixed inset-0". Enquanto houver um na
+// tela, os atalhos de perfil da Live ficam adormecidos: a lógica de clipboard
+// não pode roubar foco nem preencher a busca por baixo de um modal (bug do
+// arraste que "vazava" para o modal da tela live).
+function haOverlayAberto(): boolean {
+  return document.querySelector('.fixed.inset-0') !== null;
+}
+
+// Texto que veio do Instagram: o clique copia "@user" e o arraste também
+// carrega o "@". Username puro só é tratado como perfil se for tudo
+// minúsculo e sem dígitos (padrão do Instagram) — as referências de produto
+// deste sistema são numéricas/maiúsculas ("306", "T100", "A1") e passam.
+function textoEhPerfil(texto: string): boolean {
+  const t = (texto || '').trim();
+  if (!t) return false;
+  if (t.includes('@')) return true;
+  if (t !== t.toLowerCase() || /\d/.test(t)) return false;
+  return extrairPerfilInstagram(t) !== null;
+}
+
 export default function App() {
   console.log('[App] Rendering started');
   const [activeTab, setActiveTab] = useState(() => window.innerWidth < 768 ? 'sacolas' : 'live');
@@ -891,6 +911,16 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const activeItemRef = useRef<HTMLButtonElement>(null);
+  // Região da tela LIVE: os atalhos de arrastar/colar/ler clipboard só agem
+  // dentro dela — nunca na Navbar, em outras abas, modais ou overlays.
+  const liveScreenRef = useRef<HTMLDivElement>(null);
+  // true enquanto um arraste de perfis está atravessando a janela (evita ler
+  // um clipboard velho no meio do gesto de arrastar).
+  const arrasteAtivoRef = useRef(false);
+  // Último conteúdo do clipboard observado pela leitura automática. Sobrevive
+  // a trocas de aba/modal: voltar para o app com o MESMO perfil antigo no
+  // clipboard não re-preenche a busca — só um recém-copiado entra.
+  const ultimoClipboardRef = useRef('');
 
   const capitalizeWords = (str: string) => {
     return str.toLowerCase().replace(/(?:^|\s)\S/g, (a) => a.toUpperCase());
@@ -1204,11 +1234,30 @@ export default function App() {
   // Só age se o campo estiver vazio ou ainda com o perfil que preenchemos:
   // nunca sobrescreve algo que o operador digitou. Sem permissão de leitura,
   // fica em silêncio e arrastar/colar continuam funcionando.
+  //
+  // CIRURGIA (bugs da live): a leitura só acontece com a aba LIVE ativa,
+  // sem overlay/modal aberto e — no caso de clique — quando o alvo está
+  // DENTRO da área da tela LIVE. Clicar na Navbar (aba ACERTO etc.), em
+  // outro controle ou no Modo Separação não dispara mais nada, e o estado
+  // é re-checado depois do await (a aba pode mudar durante a leitura).
   useEffect(() => {
     if (activeTab !== 'live') return;
+    let cancelado = false;
     let ultimoPreenchido = '';
 
-    const lerAreaDeTransferencia = async () => {
+    const naTelaLive = (alvo: EventTarget | null): boolean =>
+      liveScreenRef.current !== null &&
+      alvo instanceof Node &&
+      liveScreenRef.current.contains(alvo);
+
+    const podePreencher = (): boolean =>
+      !cancelado &&
+      !arrasteAtivoRef.current &&
+      !haOverlayAberto() &&
+      !!searchInputRef.current;
+
+    const lerAreaDeTransferencia = async (porCliqueNaLive = false) => {
+      if (!podePreencher()) return;
       const campo = searchInputRef.current;
       if (!campo) return;
       const atual = campo.value.trim();
@@ -1220,6 +1269,15 @@ export default function App() {
       } catch {
         return;
       }
+      // Pós-await: aba/modal podem ter mudado enquanto o navegador respondia.
+      if (!podePreencher()) return;
+
+      // Voltar para a janela/visibilidade com o MESMO clipboard de antes:
+      // não re-colamos o perfil antigo ("clico em ACERTO e cola o último").
+      // Só um recém-copiado — ou um clique DENTRO da tela Live — preenche.
+      const jaVisto = texto !== '' && texto === ultimoClipboardRef.current;
+      if (jaVisto && !porCliqueNaLive) return;
+      if (texto) ultimoClipboardRef.current = texto;
 
       const perfil = extrairPerfilInstagram(texto);
       if (!perfil || perfil === ultimoPreenchido) return;
@@ -1227,7 +1285,13 @@ export default function App() {
     };
 
     const aoFocar = () => void lerAreaDeTransferencia();
-    const aoInteragir = () => void lerAreaDeTransferencia();
+    const aoInteragir = (e: PointerEvent) => {
+      // Um clique novo encerra qualquer arraste pendente.
+      arrasteAtivoRef.current = false;
+      // Só cliques DENTRO da área da tela Live (não na Navbar/outras abas).
+      if (!naTelaLive(e.target)) return;
+      void lerAreaDeTransferencia(true);
+    };
     const aoVoltar = () => {
       if (document.visibilityState === 'visible') void lerAreaDeTransferencia();
     };
@@ -1236,56 +1300,121 @@ export default function App() {
     window.addEventListener('pointerdown', aoInteragir);
     document.addEventListener('visibilitychange', aoVoltar);
     return () => {
+      cancelado = true;
       window.removeEventListener('focus', aoFocar);
       window.removeEventListener('pointerdown', aoInteragir);
       document.removeEventListener('visibilitychange', aoVoltar);
     };
   }, [activeTab, aceitarPerfilInstagram]);
 
-  // Arrastar/soltar em QUALQUER ponto da tela Live (não só no campo de busca).
+  // Arrastar/soltar/colar SOMENTE dentro da área da tela Live.
   // Listeners NATIVOS em captura no document: o navegador só permite soltar
   // quando o 'dragover' é cancelado, e por captura o evento é tratado antes
   // do React — funciona com o Instagram em outra janela e até sobre o cabeçalho.
+  //
+  // CIRURGIA (bugs da live):
+  //  • o alvo precisa estar DENTRO de liveScreenRef — Navbar, abas, modais e
+  //    o Modo Separação ficam de fora e recebem só o comportamento nativo;
+  //  • se o dataTransfer vier vazio (arraste de outra janela/aba), lemos o
+  //    clipboard — o bookmarklet grava o perfil NOVO nele no dragstart, então
+  //    nunca mais cola o perfil anterior (bug do arraste colar nome velho);
+  //  • enquanto o arraste estiver ativo, a leitura automática de clipboard
+  //    fica suspensa (nada de preencher a busca com clipboard velho).
   useEffect(() => {
     if (activeTab !== 'live') return;
+    let cancelado = false;
+
+    const naTelaLive = (alvo: EventTarget | null): boolean =>
+      liveScreenRef.current !== null &&
+      alvo instanceof Node &&
+      liveScreenRef.current.contains(alvo);
 
     const campoAlvo = (alvo: EventTarget | null): HTMLElement | null =>
       alvo instanceof HTMLElement
         ? alvo.closest('input, textarea, [contenteditable="true"]')
         : null;
 
+    const lerClipboard = async (): Promise<string> => {
+      try {
+        return (await navigator.clipboard.readText()).trim();
+      } catch {
+        return '';
+      }
+    };
+
+    const aoEntrarArraste = () => {
+      arrasteAtivoRef.current = true;
+    };
+    const aoSairArraste = (e: DragEvent) => {
+      // dragleave só conta quando o ponteiro saiu da janela (relatedTarget
+      // null); dragend/drop encerram o gesto. pointerdown também zera.
+      if (e.type === 'dragleave' && e.relatedTarget !== null) return;
+      arrasteAtivoRef.current = false;
+    };
+
     const aoArrastar = (e: DragEvent) => {
+      if (!naTelaLive(e.target)) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     };
 
-    const aoSoltar = (e: DragEvent) => {
+    const aoSoltar = async (e: DragEvent) => {
+      arrasteAtivoRef.current = false;
+      if (!naTelaLive(e.target)) return;
       const campo = campoAlvo(e.target);
       // Soltou em OUTRO campo (ex.: preço/referência): comportamento nativo.
       if (campo && campo !== searchInputRef.current) return;
 
-      const aceitou = aceitarPerfilInstagram(e.dataTransfer?.getData('text/plain') || '');
+      const direto = (e.dataTransfer?.getData('text/plain') || '').trim();
+      let texto = direto;
+      if (!texto) {
+        // Arraste vindo de outra janela/aba nem sempre entrega o
+        // dataTransfer. Nesse caso o bookmarklet já gravou o perfil novo no
+        // clipboard no dragstart — lemos daqui em vez de deixar um perfil
+        // ANTIGO na busca.
+        e.preventDefault();
+        texto = await lerClipboard();
+        // Pós-await: a tela/modal pode ter mudado durante a leitura.
+        if (cancelado || !naTelaLive(e.target) || haOverlayAberto()) return;
+      }
+
+      const aceitou = aceitarPerfilInstagram(texto);
       if (aceitou) {
         e.preventDefault(); // já preencheu: não deixa o navegador colar por cima
         return;
       }
       // Texto que não é perfil solto no campo de busca (ex.: código):
-      // deixa o navegador inserir normalmente.
-      if (campo === searchInputRef.current) return;
+      // deixa o navegador inserir normalmente — mas só quando o texto veio
+      // do próprio arraste (sem dataTransfer não há o que inserir).
+      if (campo === searchInputRef.current && direto) return;
       e.preventDefault(); // evita navegação ao soltar arquivo/imagem
     };
 
     const aoColar = (e: ClipboardEvent) => {
-      if (campoAlvo(e.target)) return;
+      const alvo = e.target;
+      // Cola fora de um campo só na área da tela Live (ou com o foco na
+      // página, sem nenhum overlay por cima). Navbar/modais ficam intactos.
+      const naAreaLive = naTelaLive(alvo) ||
+        (alvo === document.body && !haOverlayAberto() && !!searchInputRef.current);
+      if (!naAreaLive) return;
+      if (campoAlvo(alvo)) return;
       if (aceitarPerfilInstagram(e.clipboardData?.getData('text/plain') || '')) {
         e.preventDefault();
       }
     };
 
+    document.addEventListener('dragenter', aoEntrarArraste, true);
+    document.addEventListener('dragleave', aoSairArraste, true);
+    document.addEventListener('dragend', aoSairArraste, true);
     document.addEventListener('dragover', aoArrastar, true);
     document.addEventListener('drop', aoSoltar, true);
     document.addEventListener('paste', aoColar, true);
     return () => {
+      cancelado = true;
+      arrasteAtivoRef.current = false;
+      document.removeEventListener('dragenter', aoEntrarArraste, true);
+      document.removeEventListener('dragleave', aoSairArraste, true);
+      document.removeEventListener('dragend', aoSairArraste, true);
       document.removeEventListener('dragover', aoArrastar, true);
       document.removeEventListener('drop', aoSoltar, true);
       document.removeEventListener('paste', aoColar, true);
@@ -3570,6 +3699,7 @@ export default function App() {
             ) : (
             <motion.div
               key="live-tab"
+              ref={liveScreenRef}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
@@ -5179,6 +5309,22 @@ export default function App() {
                         ref={modalRefInput}
                         type="text"
                         value={modalRef}
+                        onDrop={(e) => {
+                          // Perfil do Instagram não é referência de produto:
+                          // bloqueia o soltar, senão o perfil cai direto aqui.
+                          const t = e.dataTransfer.getData('text/plain');
+                          if (textoEhPerfil(t)) {
+                            e.preventDefault();
+                            showToast('⚠️ Isso é um perfil, não uma referência.');
+                          }
+                        }}
+                        onPaste={(e) => {
+                          const t = e.clipboardData.getData('text/plain');
+                          if (textoEhPerfil(t)) {
+                            e.preventDefault();
+                            showToast('⚠️ Isso é um perfil, não uma referência.');
+                          }
+                        }}
                         onChange={(e) => {
                           modalRefValueRef.current = e.target.value;
                           setModalRef(e.target.value);
