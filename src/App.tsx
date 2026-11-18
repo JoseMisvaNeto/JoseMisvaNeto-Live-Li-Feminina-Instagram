@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { api, isDbId } from './lib/api';
 import { classificarSacola } from './utils/classificarSacola';
 import { parseEntradaSacola } from './utils/parseEntradaSacola';
@@ -338,6 +338,11 @@ export default function App() {
   const modalPriceInput = useRef<HTMLInputElement | null>(null);
   const modalQtyInput = useRef<HTMLInputElement | null>(null);
   const autoPriceRef = useRef<string | null>(null); // último preço preenchido automaticamente
+  // true quando o preço automático acabou de ser setado e o campo está focado:
+  // a seleção é feita NO COMMIT (useLayoutEffect), não em setTimeout — o
+  // setTimeout(0) antigo perdia a corrida para o React e deixava o caret no
+  // fim do valor ("Preço Un. sem seleção" ao Tabar do REF para o Preço).
+  const selecionarPrecoAutoRef = useRef(false);
   // Espelhos síncronos dos campos (o updater do setState pode rodar 2x no StrictMode)
   const modalRefValueRef = useRef('');
   const modalPriceValueRef = useRef('');
@@ -391,13 +396,14 @@ export default function App() {
             if (atual === '' || atual === autoPriceRef.current) {
               autoPriceRef.current = precoTxt;
               modalPriceValueRef.current = precoTxt;
+              // Pré-preenchimento automático: se o valor vai mudar e o campo
+              // está focado, marca para selecionar tudo NO COMMIT (o
+              // setTimeout(0) antigo rodava antes do React aplicar o valor e
+              // o select era perdido — caret ficava no fim sem seleção).
+              if (precoTxt !== atual && document.activeElement === modalPriceInput.current) {
+                selecionarPrecoAutoRef.current = true;
+              }
               setModalPrice(precoTxt);
-              // Pré-preenchimento automático: se o campo já está com foco,
-              // seleciona tudo para permitir digitação imediata por cima.
-              setTimeout(() => {
-                const el = modalPriceInput.current;
-                if (el && document.activeElement === el) el.select();
-              }, 0);
             }
           }
         } else {
@@ -410,6 +416,16 @@ export default function App() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modalRef]);
+
+  // Preço automático aplicado: o useLayoutEffect roda DEPOIS do React
+  // commitar o novo valor — o select() aqui nunca perde a corrida e o valor
+  // fica sempre selecionado com o cursor dentro do campo.
+  useLayoutEffect(() => {
+    if (!selecionarPrecoAutoRef.current) return;
+    selecionarPrecoAutoRef.current = false;
+    const el = modalPriceInput.current;
+    if (el && document.activeElement === el) el.select();
+  }, [modalPrice]);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const customersRef = useRef(customers);
@@ -1472,13 +1488,6 @@ export default function App() {
   // (sem isto, clique repetido na mesma sacola não mudava estado nenhum e a
   //  atualização só chegava no polling de 15s — era o delay dos botões)
   const [separacaoTick, setSeparacaoTick] = useState(0);
-  // Aviso central de "sacola concluída" (5s ou fechado pelo operador)
-  const [separacaoAviso, setSeparacaoAviso] = useState<{
-    id: number; // identidade: reinicia animação e contador em avisos consecutivos
-    codigo: string;
-    total: number;
-    pecas: number;
-  } | null>(null);
   // Aviso central de "PASSOU DO TOTAL" (multiplicador acima do alvo).
   // NÃO fecha sozinho: o operador precisa ir conferir a pilha física e
   // decidir com APROVAR (confia e conta tudo) ou RECUSAR (não conta nada).
@@ -1611,7 +1620,6 @@ export default function App() {
       return;
     }
 
-    const estavaConcluida = sacola.concluida;
     sacola.pecasSeparadas = novaQtd;
     if (sacola.pecasSeparadas >= sacola.totalAlvo) sacola.concluida = true;
     separacaoSacolasRef.current.set(sacola.codigo, sacola);
@@ -1620,16 +1628,9 @@ export default function App() {
     setSeparacaoPiscaPersistente(null);
     setSeparacaoTick((v) => v + 1); // re-render imediato do card (+1/X)
     if (sacola.concluida) {
+      // Sacola fechou: card vira BRANCO e o popup de mercadorias fecha.
+      // Sem aviso central — a saída da tela é pelo botão "Entregar sacola".
       setMercadoriaAberta(null);
-      // Aviso central só na transição para concluída (evita repetir em +1 extra)
-      if (!estavaConcluida) {
-        setSeparacaoAviso({
-          id: Date.now(),
-          codigo: sacola.codigo,
-          total: sacola.totalAlvo,
-          pecas: sacola.pecasSeparadas,
-        });
-      }
     }
     salvarSeparacaoLS();
   };
@@ -1643,21 +1644,13 @@ export default function App() {
     setSeparacaoAvisoEstouro(null);
     const sacola = separacaoSacolasRef.current.get(estouro.codigo);
     if (!sacola) return;
-    const estavaConcluida = sacola.concluida;
     sacola.pecasSeparadas = estouro.novaQtd;
     sacola.concluida = true;
     separacaoSacolasRef.current.set(sacola.codigo, sacola);
     setSeparacaoSacolaDestacada(sacola.codigo);
     setSeparacaoTick((v) => v + 1);
+    // Card fecha (branco) e o popup some — sem aviso central de conclusão.
     setMercadoriaAberta(null);
-    if (!estavaConcluida) {
-      setSeparacaoAviso({
-        id: Date.now(),
-        codigo: sacola.codigo,
-        total: sacola.totalAlvo,
-        pecas: sacola.pecasSeparadas,
-      });
-    }
     salvarSeparacaoLS();
   };
 
@@ -1688,11 +1681,21 @@ export default function App() {
     salvarSeparacaoLS();
   };
 
+  // Renumera a fila 1..N após qualquer remoção: as sacolas seguintes sobem
+  // de posição (a fila física precisa bater com a numeração dos cards —
+  // removida a 12, a antiga 13 vira 12, e assim por diante).
+  const renumerarFilaSeparacao = () => {
+    [...separacaoSacolasRef.current.values()]
+      .sort((a, b) => a.ordem - b.ordem)
+      .forEach((s, i) => { s.ordem = i + 1; });
+  };
+
   // Confirmado no aviso: remove a sacola da lista de Separação (só localStorage).
   const excluirSacolaSeparacao = () => {
     const aviso = separacaoAvisoExclusao;
     if (!aviso) return;
     separacaoSacolasRef.current.delete(aviso.codigo);
+    renumerarFilaSeparacao(); // fila seguinte sobe de posição na hora
     if (separacaoSacolaDestacada === aviso.codigo) setSeparacaoSacolaDestacada(null);
     if (mercadoriaAberta === aviso.codigo) setMercadoriaAberta(null);
     if (separacaoPiscaPersistente === aviso.codigo) setSeparacaoPiscaPersistente(null);
@@ -1730,13 +1733,6 @@ export default function App() {
       console.warn('Separação: não foi possível salvar no localStorage', err);
     }
   };
-
-  // Aviso de "sacola concluída": fecha sozinho após 5 segundos
-  useEffect(() => {
-    if (!separacaoAviso) return;
-    const t = setTimeout(() => setSeparacaoAviso(null), 5000);
-    return () => clearTimeout(t);
-  }, [separacaoAviso]);
 
   // Campo da sacola: se o operador digita e não faz nada por 8 segundos,
   // o número some do campo (limpo para a próxima digitação), MAS o card
@@ -1789,6 +1785,11 @@ export default function App() {
       console.warn('Separação: não foi possível restaurar do localStorage', err);
       separacaoSacolasRef.current = new Map();
     }
+    // Filas salvas por versões antigas podiam ficar com buracos (exclusão sem
+    // renumeração): normaliza para 1..N — a numeração dos cards é a fila real.
+    [...separacaoSacolasRef.current.values()]
+      .sort((a, b) => a.ordem - b.ordem)
+      .forEach((s, i) => { s.ordem = i + 1; });
     setSeparacaoSacolaDestacada(null);
     setMercadoriaAberta(null);
     setSeparacaoInput('');
@@ -3402,6 +3403,17 @@ export default function App() {
                 const pct = sacola.totalAlvo > 0
                   ? Math.min(100, Math.round((sacola.pecasSeparadas / sacola.totalAlvo) * 100))
                   : 0;
+                // Duas informações de nome SEMPRE visíveis (mesmo par das
+                // colunas SACOLA/NOME da tela Acerto): username EM CIMA e
+                // nome_completo ABAIXO. Sem nome_completo o cadastro cai no
+                // username — nesse caso a 2ª linha vira @username para o card
+                // nunca ficar com uma linha só.
+                const perfilLimpo = (sacola.username || '').replace(/^@/, '').trim();
+                const nomeLimpo = (sacola.nome || '').replace(/^@/, '').trim();
+                const linhaCima = perfilLimpo || nomeLimpo;
+                const linhaBaixo = (nomeLimpo && nomeLimpo.toLowerCase() !== linhaCima.toLowerCase())
+                  ? (sacola.nome || '').trim()
+                  : (linhaCima ? `@${linhaCima}` : '');
                 const estaDestacada = separacaoSacolaDestacada === sacola.codigo;
                 // Pisca imediatamente enquanto o código digitado bate com a sacola
                 // (reconhece a parte antes do "*": "77*3" continua piscando a 77)
@@ -3459,22 +3471,24 @@ export default function App() {
                       </span>
                     </div>
 
-                    {/* Cliente: nome + @usuario na mesma linha */}
-                    <div className="mt-0.5 text-black font-black text-[10px] leading-tight truncate">
-                      {sacola.nome}
-                      {sacola.username && (
-                        <span className="text-black/65 font-bold">
-                          {' '}@{sacola.username.replace(/^@/, '')}
-                        </span>
-                      )}
+                    {/* Cliente: DUAS informações sempre — username EM CIMA e
+                        nome_completo ABAIXO (mesmo formato das colunas
+                        SACOLA/NOME da tela Acerto) */}
+                    <div className="mt-1 space-y-0.5">
+                      <div className="text-black font-black text-[14px] leading-tight break-words">
+                        {linhaCima}
+                      </div>
+                      <div className="text-black/70 font-bold text-[12px] leading-tight truncate">
+                        {linhaBaixo}
+                      </div>
                     </div>
 
                     {/* Progresso em uma linha só */}
                     <div className="mt-1 flex items-center gap-1">
-                      <span className="text-[9px] font-black text-black/70 tabular-nums whitespace-nowrap">
+                      <span className="text-[13px] font-black text-black/75 tabular-nums whitespace-nowrap">
                         {sacola.pecasSeparadas}/{sacola.totalAlvo}
                       </span>
-                      <div className="flex-1 h-1 bg-black/30 rounded-full overflow-hidden">
+                      <div className="flex-1 h-1.5 bg-black/30 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all duration-300 ${pct >= 100 ? 'bg-[#22c55e]' : 'bg-[#ccff00]'}`}
                           style={{ width: `${pct}%` }}
@@ -3482,8 +3496,28 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Ações em uma linha só (mercadorias | +1 | desfazer) */}
+                    {/* Ações em uma linha só (entregar | mercadorias | +1 | desfazer) */}
                     <div className="mt-1 flex gap-0.5">
+                      {/* Sacola FECHADA (card branco): sai da tela e a fila é
+                          renumerada na hora. Só nas concluídas — protege as
+                          sacolas em andamento. Ficou à esquerda do "mercadorias"
+                          para não se confundir com o X de desfazer. */}
+                      {sacola.concluida && (
+                        <button
+                          onClick={() =>
+                            setSeparacaoAvisoExclusao({
+                              id: Date.now(),
+                              codigo: sacola.codigo,
+                              pecas: sacola.pecasSeparadas,
+                              total: sacola.totalAlvo,
+                            })
+                          }
+                          className="shrink-0 bg-black text-[#22c55e] text-[8px] font-black px-1.5 py-1 rounded hover:bg-black/80 transition-all uppercase tracking-wider whitespace-nowrap"
+                          title="Entregar sacola: sai da tela e a fila é renumerada"
+                        >
+                          entregar
+                        </button>
+                      )}
                       <button
                         onClick={(e) => {
                           const abrir = mercadoriaAberta !== sacola.codigo;
@@ -5406,6 +5440,17 @@ export default function App() {
                           if (!parseInt(modalQty, 10)) setModalQty('1');
                         }}
                         onKeyDown={(e) => {
+                          // Setas ↑/↓ incrementam/decrementam (o campo é
+                          // type=text para permitir seleção — sem o handler,
+                          // perdeu o incremento nativo do type=number).
+                          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            const atual = parseInt(modalQty, 10);
+                            const base = Number.isNaN(atual) ? 0 : atual;
+                            const delta = e.key === 'ArrowUp' ? 1 : -1;
+                            setModalQty(String(Math.max(1, base + delta)));
+                            return;
+                          }
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             confirmPurchase();
@@ -6383,48 +6428,6 @@ export default function App() {
         <div className="fixed inset-0 z-[100] bg-[#0a0a0a]/98 backdrop-blur-md">
           <SeparacaoView />
 
-          {/* Aviso central de sacola concluída (5s ou fechado pelo operador).
-              Backdrop sem bloqueio: o operador pode seguir trabalhando. */}
-          {separacaoAviso && (
-            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 pointer-events-none">
-              <div
-                key={separacaoAviso.id}
-                className="pointer-events-auto w-full max-w-md bg-[#0d1a0d] border-4 border-[#22c55e] rounded-3xl p-8 text-center shadow-[0_0_80px_rgba(34,197,94,0.55)] animate-separacao-aviso"
-              >
-                <div className="flex items-center justify-center gap-2 mb-3">
-                  <CheckCircle2 className="w-7 h-7 text-[#22c55e]" />
-                  <span className="text-[#22c55e] text-sm font-black uppercase tracking-[0.25em]">
-                    Sacola concluída
-                  </span>
-                </div>
-
-                <div className="text-white text-8xl font-black leading-none mb-2">
-                  {separacaoAviso.codigo}
-                </div>
-
-                <div className="bg-[#22c55e] text-black font-black text-lg uppercase tracking-wider rounded-xl py-2 px-4 mb-3">
-                  Separe esta sacola
-                </div>
-
-                <div className="text-white/70 text-sm font-mono uppercase tracking-wider mb-5">
-                  {separacaoAviso.pecas} / {separacaoAviso.total} peças separadas
-                </div>
-
-                {/* Barra de contagem regressiva dos 5 segundos */}
-                <div className="h-2 bg-black/60 rounded-full overflow-hidden mb-5">
-                  <div className="h-full w-full bg-[#22c55e] origin-left animate-separacao-aviso-contagem rounded-full" />
-                </div>
-
-                <button
-                  onClick={() => setSeparacaoAviso(null)}
-                  className="bg-[#22c55e] text-black font-black text-sm uppercase tracking-widest px-8 py-3 rounded-xl hover:bg-[#22c55e]/85 transition-all"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* Aviso central de "PASSOU DO TOTAL" (multiplicador acima do alvo).
               Sem auto-fecho: o operador vai conferir a pilha física e decide
               com APROVAR (conta tudo, fecha a sacola) ou RECUSAR (não conta). */}
@@ -6501,7 +6504,8 @@ export default function App() {
 
                 <div className="text-white/70 text-sm mb-6">
                   Tem certeza que quer <strong>excluir esta sacola</strong> da tela de Separação?
-                  Ela sai da lista de separação.
+                  Ela sai da lista e as sacolas seguintes sobem na fila
+                  (a numeração é atualizada automaticamente).
                   <br />
                   <span className="text-white/45 text-xs">
                     Só a Separação é alterada — o Acerto e o banco não mudam nada.
