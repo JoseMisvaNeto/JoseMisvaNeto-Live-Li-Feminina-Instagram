@@ -3303,7 +3303,16 @@ export default function App() {
           </div>
 
           {/* Campo digitar sacola - mesma altura dos cards de estatísticas ao lado */}
-          <div className="flex w-full max-w-xs gap-1 self-stretch md:self-stretch">
+          <div className="flex items-center gap-2 self-stretch flex-wrap">
+            {/* Aviso de KIT: peças granpeadas (2/3 juntas) devem entrar com o
+                TOTAL de peças do kit — senão a baixa no banco sai errada */}
+            <span
+              className="self-center shrink-0 max-w-[330px] text-[12px] leading-snug font-bold text-white/85"
+              title="Ex.: kit com 2 peças grampadas → digite 77*2 para dar baixa de 2 peças"
+            >
+              Código da sacola com mais de uma peça juntas (KIT), deve ser considerado total de peças do kit
+            </span>
+            <div className="flex w-full max-w-xs gap-1 self-stretch md:self-stretch">
             {/* Dica permanente do multiplicador (estilo caixa de PDV) */}
             <span
               className="self-center shrink-0 text-[9px] leading-tight font-black uppercase tracking-wider text-white/45 text-right"
@@ -3374,6 +3383,7 @@ export default function App() {
             >
               OK
             </button>
+            </div>
           </div>
         </div>
 
